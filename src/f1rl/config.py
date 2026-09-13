@@ -48,6 +48,20 @@ class TrackParams:
     total_length_m: float
 
 
+#: Illustrative F1 point-mass car for phase-1 sanity checks. Figures are the
+#: approximate, widely-reported values from F1 technical media/regulations
+#: (FIA minimum weight; Pirelli/Brembo/team technical explainers for grip and
+#: top speed) -- precise per-corner calibration against FastF1 telemetry is
+#: future work, not yet done.
+EXAMPLE_CAR: Final = CarParams(
+    mass_kg=798.0,  # FIA F1 Technical Regulations: minimum weight incl. driver.
+    max_lateral_g=5.0,  # Peak sustained cornering g reported for modern F1 cars.
+    max_accel_g=1.5,  # Peak longitudinal acceleration reported for F1 cars.
+    max_braking_g=5.0,  # Peak braking deceleration reported for F1 cars.
+    max_speed_ms=97.0,  # ~350 km/h, reported top speed on DRS-assisted straights.
+)
+
+
 @dataclass(frozen=True)
 class SimParams:
     """Integration and episode settings.

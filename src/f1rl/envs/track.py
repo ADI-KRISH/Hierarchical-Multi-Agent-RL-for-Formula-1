@@ -22,9 +22,14 @@ class Segment:
 
 @dataclass(frozen=True)
 class Track:
-    """A closed lap: an ordered tuple of segments."""
+    """A closed lap: an ordered tuple of segments, plus a constant track width.
+
+    ``width_m`` is one value for the whole lap -- real circuits narrow at some
+    corners, but that's a refinement the MVP's track-limit check doesn't need.
+    """
 
     segments: tuple[Segment, ...]
+    width_m: float = 12.0  # design choice for the synthetic track, not a cited spec.
 
     @property
     def total_length_m(self) -> float:

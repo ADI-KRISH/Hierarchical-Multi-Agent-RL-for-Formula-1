@@ -2,7 +2,7 @@ from gymnasium.utils.env_checker import check_env
 
 from f1rl.config import EXAMPLE_CAR, SimParams
 from f1rl.envs.driver_env import DriverEnv
-from f1rl.envs.track import example_track
+from f1rl.envs.track import Segment, Track, example_track
 
 
 def _env() -> DriverEnv:
@@ -44,3 +44,18 @@ def test_full_throttle_goes_off_track_at_the_corner() -> None:
     assert terminated is True
     assert truncated is False
     assert final_reward < 0.0
+
+
+def test_zero_curvature_never_drifts_off_track() -> None:
+    """A pure straight demands no lateral g at any speed, so even full throttle
+    the whole way round must leave the lateral-offset observation at 0.
+    """
+    straight_loop = Track(segments=(Segment(length_m=1000.0, curvature_per_m=0.0),))
+    env = DriverEnv(EXAMPLE_CAR, straight_loop, SimParams(seed=0))
+    env.reset(seed=0)
+    terminated = truncated = False
+    while not (terminated or truncated):
+        obs, _reward, terminated, truncated, _ = env.step(env.action_space.high)
+        assert obs[4] == 0.0  # lateral offset never grows
+
+    assert terminated is True  # ends by completing the lap, not going off track

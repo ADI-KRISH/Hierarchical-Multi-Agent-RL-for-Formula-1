@@ -6,6 +6,12 @@ def test_total_length_sums_segments() -> None:
     assert track.total_length_m == 150.0
 
 
+def test_width_defaults_but_is_overridable() -> None:
+    track = Track(segments=(Segment(100.0, 0.0),))
+    assert track.width_m > 0.0
+    assert Track(segments=(Segment(100.0, 0.0),), width_m=20.0).width_m == 20.0
+
+
 def test_curvature_at_picks_the_containing_segment() -> None:
     track = Track(segments=(Segment(100.0, 0.0), Segment(50.0, 0.02)))
     assert curvature_at(track, 0.0) == 0.0

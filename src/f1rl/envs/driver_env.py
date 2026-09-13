@@ -13,7 +13,6 @@ from numpy.typing import NDArray
 
 from f1rl.config import GRAVITY_M_S2, CarParams, DriverEnvParams, SimParams
 from f1rl.envs.track import Track, curvature_at
-from f1rl.models.car import max_corner_speed_ms
 
 ObsType = NDArray[np.float32]
 ActType = NDArray[np.float32]
@@ -22,13 +21,21 @@ ActType = NDArray[np.float32]
 class DriverEnv(gym.Env[ObsType, ActType]):
     """One car lapping `track`, controlled by throttle/brake each step.
 
-    Observation (Box, shape (4,)): [speed / max_speed, curvature now, curvature
-    `lookahead_m` ahead, fraction of the lap completed] -- the curvature terms are
-    normalized by `curvature_norm_per_m` and clipped to [-1, 1].
+    Observation (Box, shape (5,)): [speed / max_speed, curvature now, curvature
+    `lookahead_m` ahead, fraction of the lap completed, lateral offset / half
+    track width] -- the curvature and offset terms are normalized and clipped to
+    [-1, 1] / [0, 1].
     Action (Box, shape (1,)): throttle/brake in [-1, 1] (negative = braking).
     Reward: distance covered this step, normalized by lap length (captures both
-    progress and speed); a fixed penalty and episode end if the car exceeds the
-    current corner's grip limit.
+    progress and speed); a fixed penalty and episode end if the car runs off the
+    track edge.
+
+    Track limits: the car has no steering, so lateral position isn't directly
+    controlled -- it's a consequence of cornering too fast. Whenever the current
+    speed demands more lateral g than the car's grip (`max_lateral_g`), the car
+    drifts toward the outside of the corner at a rate proportional to the grip
+    deficit; whenever it's within grip, the offset recovers back toward the
+    racing line. Off-track is the offset exceeding half the track width.
     """
 
     def __init__(
@@ -47,13 +54,14 @@ class DriverEnv(gym.Env[ObsType, ActType]):
             low=-1.0, high=1.0, shape=(1,), dtype=np.float32
         )
         self.observation_space = gym.spaces.Box(
-            low=np.array([0.0, -1.0, -1.0, 0.0], dtype=np.float32),
-            high=np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32),
+            low=np.array([0.0, -1.0, -1.0, 0.0, 0.0], dtype=np.float32),
+            high=np.array([1.0, 1.0, 1.0, 1.0, 1.0], dtype=np.float32),
             dtype=np.float32,
         )
 
         self._speed_ms = 0.0
         self._distance_m = 0.0
+        self._lateral_offset_m = 0.0
         self._step_count = 0
 
     def reset(
@@ -62,6 +70,7 @@ class DriverEnv(gym.Env[ObsType, ActType]):
         super().reset(seed=seed if seed is not None else self.sim.seed)
         self._speed_ms = 0.0
         self._distance_m = 0.0
+        self._lateral_offset_m = 0.0
         self._step_count = 0
         return self._observation(), {}
 
@@ -84,8 +93,19 @@ class DriverEnv(gym.Env[ObsType, ActType]):
         self._step_count += 1
 
         curvature_here = curvature_at(self.track, self._distance_m)
-        grip_limit = max_corner_speed_ms(self.car, curvature_here)
-        off_track = self._speed_ms > grip_limit * self.env_params.off_track_tolerance
+        lateral_g_demand = self._speed_ms**2 * abs(curvature_here) / GRAVITY_M_S2
+        excess_g = max(0.0, lateral_g_demand - self.car.max_lateral_g)
+        if excess_g > 0.0:
+            self._lateral_offset_m += (
+                excess_g * self.env_params.drift_gain_m_s_per_g * self.sim.dt_s
+            )
+        else:
+            self._lateral_offset_m = max(
+                0.0,
+                self._lateral_offset_m
+                - self.env_params.recovery_rate_m_s * self.sim.dt_s,
+            )
+        off_track = self._lateral_offset_m > self.track.width_m / 2
 
         reward = distance_step / self.track.total_length_m
         if off_track:
@@ -103,12 +123,14 @@ class DriverEnv(gym.Env[ObsType, ActType]):
         lookahead_m = position_m + self.env_params.lookahead_m
         curvature_ahead = curvature_at(self.track, lookahead_m)
         norm = self.env_params.curvature_norm_per_m
+        offset_fraction = self._lateral_offset_m / (self.track.width_m / 2)
         return np.array(
             [
                 self._speed_ms / self.car.max_speed_ms,
                 np.clip(curvature_now / norm, -1.0, 1.0),
                 np.clip(curvature_ahead / norm, -1.0, 1.0),
                 position_m / self.track.total_length_m,
+                np.clip(offset_fraction, 0.0, 1.0),
             ],
             dtype=np.float32,
         )

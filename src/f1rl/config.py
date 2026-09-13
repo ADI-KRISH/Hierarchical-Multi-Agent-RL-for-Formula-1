@@ -85,5 +85,6 @@ class DriverEnvParams:
 
     lookahead_m: float = 50.0  # how far ahead the "next corner" observation looks.
     curvature_norm_per_m: float = 0.1  # curvature (1/m) that normalizes obs to +-1.
-    off_track_tolerance: float = 1.05  # allowed overspeed vs. grip limit before penalty
+    drift_gain_m_s_per_g: float = 5.0  # lateral drift speed per g of grip deficit.
+    recovery_rate_m_s: float = 3.0  # lateral offset recovered per second within grip.
     off_track_penalty: float = 1.0  # reward subtracted, episode ends, when exceeded.

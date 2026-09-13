@@ -1,0 +1,14 @@
+# Training artifacts and telemetry caches -- large, never committed.
+runs/
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environments -- uv.lock IS committed, the venv is not.
+.venv/

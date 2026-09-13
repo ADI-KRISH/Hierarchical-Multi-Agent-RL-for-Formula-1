@@ -1,0 +1,51 @@
+[project]
+name = "f1rl"
+version = "0.1.0"
+description = "Reinforcement learning driver agent for a custom Formula 1 simulator"
+readme = "README.md"
+authors = [
+    { name = "GS ADITHYA KRISHNA", email = "adikrishactive@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "gymnasium>=1.3.0",
+    "numpy>=2.5.3",
+    "stable-baselines3>=2.4",
+    "torch>=2.14.0",
+]
+
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.7",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = [
+    "slow: long-running simulation or training tests (deselect with '-m \"not slow\"')",
+]
+
+[tool.ruff]
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "tests"]
+strict = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["stable_baselines3.*"]
+ignore_missing_imports = true

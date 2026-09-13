@@ -1,13 +1,19 @@
 """The "drive at the limit" policy: turns a track + car into a lap time.
 
-Pure functions, no I/O. Three-pass speed-profile algorithm: cap each segment at
-its cornering-grip limit, then sweep forward under max acceleration and
-backward under max braking. A few iterations converge the closed loop (a
-segment's exit speed feeds the next segment's entry, wrapping past the start).
+Pure functions, no I/O. Fine-grained forward/backward speed-profile sweep:
+sample the lap every `step_m`, cap each station at its local cornering-grip
+limit, then sweep forward under max acceleration and backward under max
+braking. One node per curvature-segment isn't fine enough -- the grip cap
+would only bite at a segment's edge, letting the car accelerate straight
+through the middle of a corner past its own lateral-grip limit. A few
+iterations converge the closed loop (the last station's exit speed feeds
+the first).
 """
 
+import math
+
 from f1rl.config import CarParams
-from f1rl.envs.track import Track
+from f1rl.envs.track import Track, curvature_at
 from f1rl.models.car import (
     accel_limited_speed_ms,
     brake_limited_speed_ms,
@@ -15,35 +21,36 @@ from f1rl.models.car import (
 )
 
 
-def speed_profile_ms(car: CarParams, track: Track, iterations: int = 3) -> list[float]:
-    """Speed (m/s) at the start of each segment, driving the lap at the limit."""
-    n = len(track.segments)
-    speeds = [max_corner_speed_ms(car, s.curvature_per_m) for s in track.segments]
+def speed_profile_ms(
+    car: CarParams, track: Track, step_m: float = 2.0, iterations: int = 3
+) -> list[float]:
+    """Speed (m/s) at evenly spaced stations, `step_m` apart, around the lap."""
+    n = math.ceil(track.total_length_m / step_m)
+    ds = track.total_length_m / n  # even spacing that divides the lap exactly
+    speeds = [max_corner_speed_ms(car, curvature_at(track, k * ds)) for k in range(n)]
 
     for _ in range(iterations):
-        for i in range(n):
-            prev = (i - 1) % n
-            reachable = accel_limited_speed_ms(
-                car, speeds[prev], track.segments[prev].length_m
-            )
-            speeds[i] = min(speeds[i], reachable)
-        for i in reversed(range(n)):
-            nxt = (i + 1) % n
-            length = track.segments[i].length_m
-            allowed = brake_limited_speed_ms(car, speeds[nxt], length)
-            speeds[i] = min(speeds[i], allowed)
+        for k in range(n):
+            reachable = accel_limited_speed_ms(car, speeds[k - 1], ds)
+            speeds[k] = min(speeds[k], reachable)
+        for k in reversed(range(n)):
+            allowed = brake_limited_speed_ms(car, speeds[(k + 1) % n], ds)
+            speeds[k] = min(speeds[k], allowed)
 
     return speeds
 
 
-def lap_time_s(car: CarParams, track: Track, iterations: int = 3) -> float:
-    """Total lap time (s). Per segment: time = length / average(entry, exit speed)."""
-    speeds = speed_profile_ms(car, track, iterations)
+def lap_time_s(
+    car: CarParams, track: Track, step_m: float = 2.0, iterations: int = 3
+) -> float:
+    """Total lap time (s): sum of station_spacing / average(entry, exit speed)."""
+    speeds = speed_profile_ms(car, track, step_m, iterations)
     n = len(speeds)
+    ds = track.total_length_m / n
     total = 0.0
-    for i, segment in enumerate(track.segments):
-        avg_speed = (speeds[i] + speeds[(i + 1) % n]) / 2
-        total += segment.length_m / avg_speed
+    for k in range(n):
+        avg_speed = (speeds[k] + speeds[(k + 1) % n]) / 2
+        total += ds / avg_speed
     return total
 
 

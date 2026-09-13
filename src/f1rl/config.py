@@ -85,6 +85,8 @@ class DriverEnvParams:
 
     lookahead_m: float = 50.0  # how far ahead the "next corner" observation looks.
     curvature_norm_per_m: float = 0.1  # curvature (1/m) that normalizes obs to +-1.
-    drift_gain_m_s_per_g: float = 5.0  # lateral drift speed per g of grip deficit.
-    recovery_rate_m_s: float = 3.0  # lateral offset recovered per second within grip.
+    drift_gain_m_s_per_g: float = 5.0  # forced lateral drift speed per g over grip.
+    steer_gain_m_s_per_g: float = 5.0  # lateral speed per g of *unused* grip budget
+    # spent steering -- steering can only correct within whatever lateral grip the
+    # corner isn't already using, it can't out-steer physics.
     off_track_penalty: float = 1.0  # reward subtracted, episode ends, when exceeded.

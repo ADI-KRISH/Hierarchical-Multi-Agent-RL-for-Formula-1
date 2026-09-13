@@ -1,4 +1,4 @@
-from f1rl.envs.track import Segment, Track, curvature_at, example_track
+from f1rl.envs.track import Segment, Track, curvature_at, example_track, width_at
 
 
 def test_total_length_sums_segments() -> None:
@@ -6,10 +6,20 @@ def test_total_length_sums_segments() -> None:
     assert track.total_length_m == 150.0
 
 
-def test_width_defaults_but_is_overridable() -> None:
-    track = Track(segments=(Segment(100.0, 0.0),))
-    assert track.width_m > 0.0
-    assert Track(segments=(Segment(100.0, 0.0),), width_m=20.0).width_m == 20.0
+def test_segment_width_defaults_but_is_overridable() -> None:
+    assert Segment(100.0, 0.0).width_m > 0.0
+    assert Segment(100.0, 0.0, width_m=20.0).width_m == 20.0
+
+
+def test_width_at_picks_the_containing_segments_width() -> None:
+    track = Track(
+        segments=(
+            Segment(100.0, 0.0, width_m=15.0),
+            Segment(50.0, 0.02, width_m=8.0),
+        )
+    )
+    assert width_at(track, 50.0) == 15.0
+    assert width_at(track, 120.0) == 8.0
 
 
 def test_curvature_at_picks_the_containing_segment() -> None:

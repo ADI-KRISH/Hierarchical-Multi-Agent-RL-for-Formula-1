@@ -74,3 +74,16 @@ class SimParams:
     seed: int
     dt_s: float = 0.02  # 50 Hz control loop.
     max_episode_steps: int = 10_000
+
+
+@dataclass(frozen=True)
+class DriverEnvParams:
+    """Tunables for `DriverEnv`'s observation/reward shaping.
+
+    Simulation design choices, not measured F1 quantities -- see `SimParams`.
+    """
+
+    lookahead_m: float = 50.0  # how far ahead the "next corner" observation looks.
+    curvature_norm_per_m: float = 0.1  # curvature (1/m) that normalizes obs to +-1.
+    off_track_tolerance: float = 1.05  # allowed overspeed vs. grip limit before penalty
+    off_track_penalty: float = 1.0  # reward subtracted, episode ends, when exceeded.

@@ -152,5 +152,8 @@ own; do not start these to "finish faster."
 - Opponent cars + overtaking rewards.
 - Tire degradation, fuel, ERS models feeding the observation.
 - A **Strategy Agent** (discrete, once per lap) — the second half of the vision.
+  Full design: `docs/strategy_agent_design.md`. Earliest realistic entry point is
+  after Phase 5 (Driver Agent beats the baseline) or Phase 6 (dashboard) — do not
+  start this without the user explicitly confirming first.
 - Coupling the two agents (strategy mode fed into the driver's observation).
 - Stretch: self-play, FastF1 calibration, LLM race engineer, digital-twin track.

@@ -85,7 +85,9 @@ unsafe overtakes, wheel spin, track-limit violations.
 ## Strategy Agent (future work)
 
 Operates at a much lower frequency than the driver; manages strategy rather than
-controlling the car directly.
+controlling the car directly. See `docs/strategy_agent_design.md` for the full
+detailed design (state/action spaces, reward formulas, staged training plan,
+worked examples) — this section is just the summary.
 
 **Responsibilities:** pit-stop timing, tire compound selection, fuel strategy,
 ERS deployment policy, attack/defend modes, tire conservation, safety-car

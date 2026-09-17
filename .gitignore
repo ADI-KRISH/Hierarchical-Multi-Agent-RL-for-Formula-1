@@ -2,6 +2,9 @@
 runs/
 data/
 
+# Cloned external repos kept for reference -- not our code, not our history.
+references/
+
 # Python
 __pycache__/
 *.py[cod]

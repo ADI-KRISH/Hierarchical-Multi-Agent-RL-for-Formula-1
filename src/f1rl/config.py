@@ -115,10 +115,27 @@ class BaselineParams:
     Design choices for a scripted driver, not measured F1 quantities.
     """
 
-    # Fraction of the car's grip the baseline's braking points/corner speeds are
-    # planned for -- a margin a fixed script needs, since it can't react.
-    grip_margin: float = 0.97
-    speed_gain_per_m_s: float = 0.5  # throttle command per m/s below target speed.
-    # Std-dev of Gaussian noise on the throttle command: the "driver" is not a
-    # perfect actuator, which is what makes 20 runs differ.
-    throttle_noise_std: float = 0.1
+    # A cautious scripted driver, not an optimal one: it plans corner speeds for
+    # this fraction of the car's lateral grip...
+    corner_grip_margin: float = 0.90
+    # ...and places its braking points as if the car could only brake at this
+    # fraction of its real capacity, so it brakes early.
+    braking_margin: float = 0.80
+    # Each episode the driver's margins are jittered by Gaussian noise of this
+    # std-dev, kept within [margin_floor, 1.0] (1.0 is the car's real limit):
+    # lap-to-lap confidence varies, which is what makes 20 runs differ. Drawn
+    # from the driver's seeded RNG.
+    margin_jitter_std: float = 0.02
+    margin_floor: float = 0.5  # jittered margins never drop below this.
+
+
+@dataclass(frozen=True)
+class AnalyticsParams:
+    """How lap analytics split a lap and sample telemetry -- reporting choices."""
+
+    # Tighter than this (radius under 500 m) counts as a corner...
+    corner_curvature_per_m: float = 0.002
+    # ...unless shorter than this: real-circuit curvature has short noise kinks.
+    min_corner_m: float = 10.0
+    telemetry_every_n_steps: int = 5  # 10 Hz telemetry at the 50 Hz control loop.
+    map_step_m: float = 5.0  # spacing of the reconstructed track-map points.

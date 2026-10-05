@@ -34,7 +34,7 @@ def test_section_means_add_up_to_the_mean_gap(results: dict[str, Any]) -> None:
 def test_rendered_page_inlines_the_data(results: dict[str, Any]) -> None:
     body = render_body([track_view(results)])
     assert "/*__DATA__*/null" not in body
-    assert "<title>Baseline Driver Report</title>" in body
+    assert "<title>Driver Lap Report</title>" in body
     assert render_html([track_view(results)]).startswith("<!doctype html>")
 
 

@@ -1,0 +1,408 @@
+"""SB3 PPO wrapper for `DriverEnv` (phase 4): config, env factory, lap logging.
+
+Hyperparameters come from an experiment YAML under ``configs/`` -- nothing
+tunable is hardcoded here. A run writes everything needed to reproduce and
+inspect it into its ``runs/<name>/`` folder:
+
+- ``config.yaml`` (the resolved config) and ``meta.json`` (git SHA, versions);
+- ``progress.csv``: SB3's training stats per update;
+- ``episodes.csv``: every training episode -- finished?, lap time, return;
+- ``eval.csv``: periodic deterministic evaluation laps on held-out seeds;
+- ``model_best.zip`` / ``model_final.zip``.
+"""
+
+import csv
+import json
+import platform
+import subprocess
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field, fields
+from pathlib import Path
+from typing import Any
+
+import gymnasium as gym
+import numpy as np
+import stable_baselines3
+import torch
+import yaml
+from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.logger import configure
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.vec_env import DummyVecEnv
+
+from f1rl.config import EXAMPLE_CAR, CarParams, DriverEnvParams, SimParams
+from f1rl.envs.driver_env import DriverEnv
+from f1rl.envs.track import Track
+
+
+@dataclass(frozen=True)
+class RunParams:
+    """The `run:` section of an experiment YAML."""
+
+    name: str
+    seed: int
+    track: str
+    total_timesteps: int
+    n_envs: int
+    eval_every_steps: int
+    eval_episodes: int
+    eval_seed: int  # eval laps use seeds eval_seed, eval_seed + 1, ...
+    torch_threads: int = 1  # small MLPs train fastest (and reproducibly) on 1 thread
+
+
+@dataclass(frozen=True)
+class TrainConfig:
+    run: RunParams
+    sim: dict[str, Any] = field(default_factory=dict)  # SimParams overrides
+    env: dict[str, Any] = field(default_factory=dict)  # DriverEnvParams overrides
+    ppo: dict[str, Any] = field(default_factory=dict)  # PPO(...) keyword args
+    policy: dict[str, Any] = field(default_factory=dict)  # policy_kwargs
+
+    def env_params(self) -> DriverEnvParams:
+        overrides = dict(self.env)
+        if "lookahead_m" in overrides:
+            overrides["lookahead_m"] = tuple(overrides["lookahead_m"])
+        return DriverEnvParams(**overrides)
+
+    def sim_params(self, seed: int) -> SimParams:
+        return SimParams(seed=seed, **self.sim)
+
+
+def load_config(path: Path) -> TrainConfig:
+    """Parse an experiment YAML; unknown keys fail loudly rather than being
+    silently ignored."""
+    raw = yaml.safe_load(path.read_text())
+    sections = {f.name for f in fields(TrainConfig)}
+    unknown = set(raw) - sections
+    if unknown:
+        raise ValueError(f"unknown config sections: {sorted(unknown)}")
+    config = TrainConfig(
+        run=RunParams(**raw["run"]),
+        sim=raw.get("sim") or {},
+        env=raw.get("env") or {},
+        ppo=raw.get("ppo") or {},
+        policy=raw.get("policy") or {},
+    )
+    config.env_params()  # validate field names now, not mid-run
+    config.sim_params(0)
+    return config
+
+
+def make_env_fn(
+    car: CarParams,
+    track: Track,
+    sim: SimParams,
+    env_params: DriverEnvParams,
+    monitor: bool = True,
+) -> Callable[[], gym.Env[Any, Any]]:
+    def _make() -> gym.Env[Any, Any]:
+        env: gym.Env[Any, Any] = DriverEnv(car, track, sim, env_params)
+        return Monitor(env) if monitor else env
+
+    return _make
+
+
+def run_policy_lap(
+    model: PPO,
+    env: DriverEnv,
+    seed: int,
+    deterministic: bool = True,
+    telemetry_every: int = 0,
+) -> dict[str, Any]:
+    """Drive one episode with `model`'s policy; optional decimated telemetry."""
+    obs, info = env.reset(seed=seed)
+    total = 0.0
+    step = 0
+    channels = ("time_s", "distance_m", "speed_ms", "lateral_offset_m")
+    telemetry: dict[str, list[float]] = {
+        c: [] for c in (*channels, "throttle", "steer")
+    }
+    terminated = truncated = False
+    while not (terminated or truncated):
+        action, _state = model.predict(obs, deterministic=deterministic)
+        if telemetry_every and step % telemetry_every == 0:
+            values = (
+                info["elapsed_s"],
+                info["distance_m"],
+                info["speed_ms"],
+                info["lateral_offset_m"],
+            )
+            for name, value in zip(channels, values, strict=True):
+                telemetry[name].append(round(float(value), 4))
+            clipped = np.clip(action, -1.0, 1.0)
+            telemetry["throttle"].append(round(float(clipped[0]), 4))
+            telemetry["steer"].append(round(float(clipped[1]), 4))
+        obs, reward, terminated, truncated, info = env.step(action)
+        total += float(reward)
+        step += 1
+    result: dict[str, Any] = {
+        "seed": seed,
+        "completed": bool(info["lap_completed"]),
+        "off_track": bool(info["off_track"]),
+        "stalled": bool(info.get("stalled", False)),
+        "off_track_at_m": info["distance_m"] if info["off_track"] else None,
+        "lap_time_s": info.get("lap_time_s"),
+        "distance_m": info["distance_m"],
+        "total_reward": total,
+    }
+    if telemetry_every:
+        result["telemetry"] = telemetry
+    return result
+
+
+def eval_score(results: list[dict[str, Any]]) -> tuple[float, float, float]:
+    """Sort key for "better model", higher is better: completion rate first, then
+    faster mean lap, then mean reward -- which is what separates models before any
+    of them finishes a lap (without it, early evals all tie)."""
+    done = [r["lap_time_s"] for r in results if r["completed"]]
+    rate = len(done) / len(results)
+    mean_lap = -float(np.mean(done)) if done else -float("inf")
+    return rate, mean_lap, float(np.mean([r["total_reward"] for r in results]))
+
+
+class LapLoggerCallback(BaseCallback):
+    """Logs every finished training episode and runs periodic evaluation."""
+
+    def __init__(
+        self,
+        run_dir: Path,
+        eval_env: DriverEnv,
+        eval_every_steps: int,
+        eval_episodes: int,
+        eval_seed: int,
+    ) -> None:
+        super().__init__()
+        self.run_dir = run_dir
+        self.eval_env = eval_env
+        self.eval_every_steps = eval_every_steps
+        self.eval_episodes = eval_episodes
+        self.eval_seed = eval_seed
+        self.best_score: tuple[float, float, float] | None = None
+        self._next_eval = 0
+        self._returns: np.ndarray = np.zeros(0)
+        self._episodes_file: Any = None
+        self._episodes: Any = None
+        self._recent: list[dict[str, Any]] = []
+
+    def _on_training_start(self) -> None:
+        self._returns = np.zeros(self.training_env.num_envs)
+        self._episodes_file = (self.run_dir / "episodes.csv").open("w", newline="")
+        self._episodes = csv.writer(self._episodes_file)
+        self._episodes.writerow(
+            [
+                "timesteps",
+                "env",
+                "completed",
+                "off_track",
+                "stalled",
+                "lap_time_s",
+                "distance_m",
+                "total_reward",
+            ]
+        )
+        with (self.run_dir / "eval.csv").open("w", newline="") as f:
+            csv.writer(f).writerow(
+                [
+                    "timesteps",
+                    "completion_rate",
+                    "mean_lap_s",
+                    "best_lap_s",
+                    "mean_reward",
+                    "off_track",
+                    "stalled",
+                ]
+            )
+
+    def _on_step(self) -> bool:
+        self._returns += self.locals["rewards"]
+        for i, done in enumerate(self.locals["dones"]):
+            if not done:
+                continue
+            info = self.locals["infos"][i]
+            row = {
+                "completed": bool(info["lap_completed"]),
+                "off_track": bool(info["off_track"]),
+                "stalled": bool(info.get("stalled", False)),
+                "lap_time_s": info.get("lap_time_s"),
+                "distance_m": info["distance_m"],
+                "total_reward": float(self._returns[i]),
+            }
+            self._returns[i] = 0.0
+            self._recent.append(row)
+            self._episodes.writerow(
+                [
+                    self.num_timesteps,
+                    i,
+                    int(row["completed"]),
+                    int(row["off_track"]),
+                    int(row["stalled"]),
+                    _fmt(row["lap_time_s"]),
+                    f"{row['distance_m']:.1f}",
+                    f"{row['total_reward']:.4f}",
+                ]
+            )
+        if self.num_timesteps >= self._next_eval:
+            self._next_eval += self.eval_every_steps
+            self._evaluate()
+        return True
+
+    def _on_rollout_end(self) -> None:
+        if not self._recent:
+            return
+        laps = [r["lap_time_s"] for r in self._recent if r["completed"]]
+        self.logger.record("laps/train_completion", len(laps) / len(self._recent))
+        self.logger.record(
+            "laps/train_off_track", np.mean([r["off_track"] for r in self._recent])
+        )
+        self.logger.record(
+            "laps/train_stalled", np.mean([r["stalled"] for r in self._recent])
+        )
+        if laps:
+            self.logger.record("laps/train_mean_lap_s", float(np.mean(laps)))
+        self._recent = []
+
+    def _evaluate(self) -> None:
+        assert isinstance(self.model, PPO)
+        results = [
+            run_policy_lap(self.model, self.eval_env, self.eval_seed + k)
+            for k in range(self.eval_episodes)
+        ]
+        laps = [r["lap_time_s"] for r in results if r["completed"]]
+        rate = len(laps) / len(results)
+        mean_lap = float(np.mean(laps)) if laps else None
+        mean_reward = float(np.mean([r["total_reward"] for r in results]))
+        with (self.run_dir / "eval.csv").open("a", newline="") as f:
+            csv.writer(f).writerow(
+                [
+                    self.num_timesteps,
+                    f"{rate:.3f}",
+                    _fmt(mean_lap),
+                    _fmt(min(laps) if laps else None),
+                    f"{mean_reward:.4f}",
+                    sum(r["off_track"] for r in results),
+                    sum(r["stalled"] for r in results),
+                ]
+            )
+        self.logger.record("eval/completion_rate", rate)
+        self.logger.record("eval/mean_reward", mean_reward)
+        if mean_lap is not None:
+            self.logger.record("eval/mean_lap_s", mean_lap)
+        score = eval_score(results)
+        improved = self.best_score is None or score > self.best_score
+        if improved:
+            self.best_score = score
+            self.model.save(self.run_dir / "model_best.zip")
+        lap_text = f"{mean_lap:.3f}s" if mean_lap is not None else "--"
+        print(
+            f"[eval] {self.num_timesteps:>9,} steps  finished {rate:4.0%}  "
+            f"mean lap {lap_text:>8}  reward {mean_reward:+.3f}"
+            + ("  *best" if improved else ""),
+            flush=True,
+        )
+
+    def _on_training_end(self) -> None:
+        self._evaluate()
+        if self._episodes_file is not None:
+            self._episodes_file.close()
+
+
+def _fmt(value: float | None) -> str:
+    return "" if value is None else f"{value:.4f}"
+
+
+def git_sha() -> str:
+    try:
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "unknown"
+    return sha + ("-dirty" if dirty else "")
+
+
+def train(
+    config: TrainConfig, track: Track, run_dir: Path, car: CarParams = EXAMPLE_CAR
+) -> PPO:
+    """Train PPO per `config` on `track`, logging into `run_dir`."""
+    run = config.run
+    torch.set_num_threads(run.torch_threads)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "run": asdict(run),
+                "sim": config.sim,
+                "env": config.env,
+                "ppo": config.ppo,
+                "policy": config.policy,
+            },
+            sort_keys=False,
+        )
+    )
+    (run_dir / "meta.json").write_text(
+        json.dumps(
+            {
+                "git_sha": git_sha(),
+                "python": platform.python_version(),
+                "stable_baselines3": stable_baselines3.__version__,
+                "torch": torch.__version__,
+                "gymnasium": gym.__version__,
+                "car": asdict(car),
+                "env_params": asdict(config.env_params()),
+                "track_length_m": track.total_length_m,
+            },
+            indent=2,
+        )
+    )
+
+    env_params = config.env_params()
+    vec_env = DummyVecEnv(
+        [
+            make_env_fn(car, track, config.sim_params(run.seed + i), env_params)
+            for i in range(run.n_envs)
+        ]
+    )
+    eval_env = DriverEnv(car, track, config.sim_params(run.eval_seed), env_params)
+
+    policy_kwargs = dict(config.policy)
+    if "activation_fn" in policy_kwargs:
+        policy_kwargs["activation_fn"] = getattr(
+            torch.nn, policy_kwargs["activation_fn"]
+        )
+    model = PPO(
+        "MlpPolicy",
+        vec_env,
+        seed=run.seed,
+        device="cpu",
+        policy_kwargs=policy_kwargs,
+        verbose=0,
+        **config.ppo,
+    )
+    model.set_logger(configure(str(run_dir), ["csv"]))
+    callback = LapLoggerCallback(
+        run_dir, eval_env, run.eval_every_steps, run.eval_episodes, run.eval_seed
+    )
+    model.learn(total_timesteps=run.total_timesteps, callback=callback)
+    model.save(run_dir / "model_final.zip")
+    record_best_lap(run_dir, config, track, car)
+    return model
+
+
+def record_best_lap(
+    run_dir: Path, config: TrainConfig, track: Track, car: CarParams = EXAMPLE_CAR
+) -> dict[str, Any]:
+    """Drive one deterministic eval lap with ``model_best.zip`` and save it, with
+    10 Hz telemetry, as ``best_lap.json`` -- so reports can show the agent's line
+    from logs alone, without ever loading or running a model."""
+    model = PPO.load(run_dir / "model_best.zip", device="cpu")
+    env_params = config.env_params()
+    env = DriverEnv(car, track, config.sim_params(config.run.eval_seed), env_params)
+    every = max(1, round(0.1 / (config.sim_params(0).dt_s * env_params.action_repeat)))
+    lap = run_policy_lap(model, env, config.run.eval_seed, telemetry_every=every)
+    lap["track"] = config.run.track
+    (run_dir / "best_lap.json").write_text(json.dumps(lap))
+    return lap

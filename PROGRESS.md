@@ -3,9 +3,9 @@
 Snapshot as of 2026-10-06. Phase definitions and "done when" criteria live in
 `docs/roadmap.md`; this file only tracks where we are against them.
 
-**Summary:** phases 0-3 are done, plus extra env realism work beyond the phase 2
-spec and a review pass over the env. Phases 4-7 are not started. Nothing has been
-trained yet.
+**Summary:** phases 0-4 are done. A PPO driver completes clean laps of the
+technical track (44.18 s, 100% of eval laps) but is not yet faster than the
+rule-based baseline (43.19 s mean). Phases 5-7 are not started.
 
 ## Done
 
@@ -60,17 +60,43 @@ Baseline lap times, 20 episodes, seed 0 (`EXAMPLE_CAR`, standing start):
 The RL agent has to beat the mean lap; the limit lap is the ceiling no driver in
 this simulator can pass.
 
+### Phase 4 — Train the RL driver
+- `agents/ppo.py` + `train.py`: SB3 PPO driven by `configs/driver_ppo.yaml`. Each run
+  logs to `runs/<name>/`: resolved config, git SHA, SB3 `progress.csv`, every
+  training episode (`episodes.csv`), periodic deterministic evals on held-out seeds
+  (`eval.csv`), `model_best.zip`, `model_final.zip`, and a telemetry lap of the best
+  model (`best_lap.json`).
+- `report.py` adds a training section: reward curve, eval lap time against the
+  baseline and limit, and the agent's speed/throttle trace against both.
+
+Result (`driver_ppo`, technical track, seed 0, 2M decisions at 10 Hz, ~13 min CPU):
+first clean eval lap at 150k decisions (64.8 s), then steadily down to **44.18 s**,
+still improving at the end. Baseline mean 43.19 s, limit 41.93 s. The agent lifts
+and coasts on the shorter straights (280-285 km/h where the car can do 349), which
+is where most of its remaining second goes.
+
+What it took (each a config value; earlier runs kept under `runs/` locally):
+
+| Run | Change | Outcome |
+|---|---|---|
+| 1 | 50 Hz decisions, off-track penalty only | Full throttle into T1 every time; braking a bit earlier still crashed, so no gradient toward braking |
+| 2 | Graded overspeed penalty past braking points, safe-speed observation, 10 Hz decisions | Learned to brake for T1/T2, then parked before the chicane |
+| 3 | γ 0.98 -> 0.995 | Parked at the hairpin instead: stopping cost almost nothing, crashing cost 1.0 |
+| 4 | Stalling (< 2 m/s for 3 s) ends the episode like an off | No parking, but braking still imprecise |
+| 5 | Braking margin (safe speed - speed) as its own observation, scaled to +-1 | Clean laps from 150k decisions on |
+
 ## Left
 
 | Phase | What | State |
 |---|---|---|
-| 4 | SB3 PPO training, `configs/driver_ppo.yaml`, logging to `runs/` | Not started — `train.py` is a CLI stub, `configs/` is empty |
 | 5 | `eval.py`: agent vs baseline comparison over N episodes | Not started — CLI stub |
 | 6 | Read-only Dash dashboard over `runs/` | Not started — stub |
 | 7 | README polish: results, GIF, future-work section | Not started |
 | 8 | Future work: opponents, tire/fuel/ERS, Strategy Agent, two-agent coupling | Out of MVP scope; needs explicit go-ahead |
 
-**Next up:** phase 4, PPO training on `DriverEnv`.
+**Next up:** phase 5, `eval.py` head-to-head against the baseline. Likely levers to
+close the 1 s gap: longer training (the curve hadn't flattened), and checking
+whether the overspeed penalty makes it lift too early.
 
 ## Known gaps
 

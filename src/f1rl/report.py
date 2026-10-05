@@ -1,18 +1,23 @@
-"""Baseline report: ``uv run python -m f1rl.report``.
+"""Driver report: ``uv run python -m f1rl.report``.
 
-Read-only over ``runs/baseline/*/results.json`` (written by
-``f1rl.agents.baseline``): condenses each track's results into the numbers the
-page plots, and writes one self-contained HTML file -- data inlined, no network
-needed to open it. It never runs a driver or trains anything.
+Read-only over logged runs: ``runs/baseline/*/results.json`` (written by
+``f1rl.agents.baseline``) and any PPO training run under ``runs/`` (its
+``eval.csv``, ``episodes.csv``, ``best_lap.json``, written by ``f1rl.train``).
+Condenses them into the numbers the page plots and writes one self-contained
+HTML file -- data inlined, no network needed to open it. It never runs a driver,
+loads a model, or trains anything.
 """
 
 import argparse
+import csv
+import itertools
 import json
 from importlib import resources
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import yaml
 
 TRACE_STEP_M = 5.0  # resolution of the speed / time-delta traces on the page
 
@@ -109,6 +114,75 @@ def track_view(results: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+TRAIN_CURVE_BINS = 60  # training-episode stats are averaged into this many bins
+
+
+def training_view(run_dir: Path, length_m: float) -> dict[str, Any]:
+    """Learning curves and the best lap of one PPO run, from its log files."""
+    config = yaml.safe_load((run_dir / "config.yaml").read_text())
+    with (run_dir / "eval.csv").open() as f:
+        evals = list(csv.DictReader(f))
+    with (run_dir / "episodes.csv").open() as f:
+        episodes = list(csv.DictReader(f))
+
+    def num(value: str) -> float | None:
+        return float(value) if value not in ("", None) else None
+
+    curve: dict[str, list[float | None]] = {
+        "timesteps": [],
+        "mean_return": [],
+        "completion": [],
+        "mean_lap_s": [],
+    }
+    if episodes:
+        last = int(episodes[-1]["timesteps"])
+        edges = np.linspace(0, last, TRAIN_CURVE_BINS + 1)
+        for lo, hi in itertools.pairwise(edges):
+            chunk = [e for e in episodes if lo < int(e["timesteps"]) <= hi]
+            if not chunk:
+                continue
+            laps = [float(e["lap_time_s"]) for e in chunk if e["completed"] == "1"]
+            curve["timesteps"].append(round(float(hi)))
+            curve["mean_return"].append(
+                round(float(np.mean([float(e["total_reward"]) for e in chunk])), 4)
+            )
+            curve["completion"].append(round(len(laps) / len(chunk), 3))
+            curve["mean_lap_s"].append(round(float(np.mean(laps)), 3) if laps else None)
+
+    best_lap = None
+    best_path = run_dir / "best_lap.json"
+    if best_path.exists():
+        lap = json.loads(best_path.read_text())
+        t = lap.get("telemetry")
+        best_lap = {
+            "completed": lap["completed"],
+            "lap_time_s": lap["lap_time_s"],
+            "total_reward": lap["total_reward"],
+        }
+        if t and lap["completed"]:
+            grid = np.linspace(0.0, length_m, int(length_m // TRACE_STEP_M) + 1)
+            dist = [*t["distance_m"], length_m]
+            speed = [*t["speed_ms"], t["speed_ms"][-1]]
+            throttle = [*t["throttle"], t["throttle"][-1]]
+            best_lap["speed_kmh"] = _rounded(np.interp(grid, dist, speed) * 3.6, 1)
+            best_lap["throttle"] = _rounded(np.interp(grid, dist, throttle), 3)
+
+    return {
+        "name": run_dir.name,
+        "config": config,
+        "meta": json.loads((run_dir / "meta.json").read_text()),
+        "eval": {
+            "timesteps": [int(e["timesteps"]) for e in evals],
+            "completion_rate": [float(e["completion_rate"]) for e in evals],
+            "mean_lap_s": [num(e["mean_lap_s"]) for e in evals],
+            "best_lap_s": [num(e["best_lap_s"]) for e in evals],
+            "mean_reward": [float(e["mean_reward"]) for e in evals],
+        },
+        "train": curve,
+        "best_lap": best_lap,
+    }
+
+
 def _rounded(values: Any, digits: int) -> list[float]:
     return [round(float(v), digits) for v in values]
 
@@ -133,9 +207,34 @@ def render_html(views: list[dict[str, Any]]) -> str:
     )
 
 
-def load_views(runs_dir: Path) -> list[dict[str, Any]]:
+def load_views(
+    runs_dir: Path, training_runs: list[Path] | None = None
+) -> list[dict[str, Any]]:
+    """One view per baseline track, each carrying the training runs (if any)
+    that trained on that track."""
     paths = sorted(runs_dir.glob("*/results.json"))
-    return [track_view(json.loads(p.read_text())) for p in paths]
+    views = [track_view(json.loads(p.read_text())) for p in paths]
+    for view in views:
+        view["training"] = [
+            training_view(run, view["length_m"])
+            for run in training_runs or []
+            if _run_track(run) == view["name"]
+        ]
+    return views
+
+
+def find_training_runs(runs_root: Path) -> list[Path]:
+    """Run folders a PPO training wrote (they hold eval.csv and config.yaml)."""
+    return sorted(
+        p.parent
+        for p in runs_root.glob("*/eval.csv")
+        if (p.parent / "config.yaml").exists() and (p.parent / "meta.json").exists()
+    )
+
+
+def _run_track(run_dir: Path) -> str:
+    config = yaml.safe_load((run_dir / "config.yaml").read_text())
+    return str(config["run"]["track"])
 
 
 def main() -> None:
@@ -143,6 +242,13 @@ def main() -> None:
         description="Build the HTML report over logged baseline runs (read-only)."
     )
     parser.add_argument("--runs", type=Path, default=Path("runs/baseline"))
+    parser.add_argument(
+        "--training",
+        type=Path,
+        nargs="*",
+        default=None,
+        help="Training run folders to include (default: every run under runs/).",
+    )
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument(
         "--body-only",
@@ -151,7 +257,12 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    views = load_views(args.runs)
+    training = (
+        args.training
+        if args.training is not None
+        else find_training_runs(args.runs.parent)
+    )
+    views = load_views(args.runs, training)
     if not views:
         raise SystemExit(
             f"No results under {args.runs}/ -- run "

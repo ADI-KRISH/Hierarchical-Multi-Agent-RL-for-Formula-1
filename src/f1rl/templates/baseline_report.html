@@ -1,4 +1,4 @@
-<title>Baseline Driver Report</title>
+<title>Driver Lap Report</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
@@ -19,6 +19,7 @@
   --accent: #d0021b;          /* kerb red: used only for the S/F line and eyebrow */
   --series-1: #2a78d6;        /* baseline */
   --series-2: #eb6834;        /* limit lap */
+  --series-3: #1baf7a;        /* RL agent */
   --neutral-bar: #b3b1a8;
   --good: #006300;
   --seq-0: #b7d3f6; --seq-1: #6da7ec; --seq-2: #2a78d6; --seq-3: #1c5cab; --seq-4: #104281;
@@ -32,7 +33,7 @@
     --bg: #0f0f0e; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #9a988f;
     --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
     --band: rgba(57, 135, 229, 0.09); --track: #34342f; --accent: #ff4d5e;
-    --series-1: #3987e5; --series-2: #d95926; --neutral-bar: #6b6a63; --good: #0ca30c;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --neutral-bar: #6b6a63; --good: #0ca30c;
     --seq-0: #184f95; --seq-1: #2a78d6; --seq-2: #5598e7; --seq-3: #9ec5f4; --seq-4: #e6f0fd;
   }
 }
@@ -41,10 +42,11 @@
   --bg: #0f0f0e; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #9a988f;
   --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
   --band: rgba(57, 135, 229, 0.09); --track: #34342f; --accent: #ff4d5e;
-  --series-1: #3987e5; --series-2: #d95926; --neutral-bar: #6b6a63; --good: #0ca30c;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --neutral-bar: #6b6a63; --good: #0ca30c;
   --seq-0: #184f95; --seq-1: #2a78d6; --seq-2: #5598e7; --seq-3: #9ec5f4; --seq-4: #e6f0fd;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: var(--step-0); line-height: 1.5; }
 .page { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 56px; display: grid; gap: 20px; }
 @media (min-width: 720px) { .page { padding-inline: 28px; } }
@@ -74,6 +76,7 @@ header { display: grid; gap: 8px; }
 .two { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 900px) { .two { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); } }
 .stack { display: grid; gap: 20px; }
+.section-title { font-size: var(--step-2); }
 .chart { position: relative; width: 100%; min-width: 0; }
 .chart svg { display: block; width: 100%; overflow: visible; }
 .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: var(--step--1); color: var(--ink-2); }
@@ -113,15 +116,38 @@ details pre { font-size: 12px; overflow-x: auto; background: var(--bg); padding:
 
 <div class="page">
   <header>
-    <div class="eyebrow">FormulaOneRL · Phase 3</div>
-    <h1>Baseline Driver Report</h1>
-    <p class="lede">A cautious rule-based driver laps each track from a standing start. It is timed against the theoretical limit lap for the same car, a perfect driver using 100% of grip and brakes. The gap between the two is the time an RL driver has to find.</p>
+    <div class="eyebrow">FormulaOneRL · Phases 3–4</div>
+    <h1>Driver Lap Report</h1>
+    <p class="lede">A cautious rule-based driver and a PPO-trained RL driver lap each track from a standing start. Both are timed against the theoretical limit lap for the same car: a perfect driver using 100% of grip and brakes. The baseline is the time the RL driver has to beat.</p>
     <p class="meta" id="meta"></p>
   </header>
 
   <nav class="tabs" id="tabs" role="tablist" aria-label="Track"></nav>
 
   <section class="tiles" id="tiles" aria-label="Summary"></section>
+
+  <section class="stack" id="training-section" hidden>
+    <div class="card-head"><h2 class="section-title">RL driver training</h2><p class="meta" id="training-meta"></p></div>
+    <nav class="tabs" id="run-tabs" aria-label="Training run"></nav>
+    <section class="tiles" id="training-tiles" aria-label="Training summary"></section>
+    <div class="two">
+      <section class="card">
+        <div class="card-head">
+          <h2>Reward per episode</h2>
+          <p>Mean training-episode return, averaged in bins across training. A finished lap pays 1.0 in progress, minus time and penalties; going off or stalling costs 1.0.</p>
+        </div>
+        <div class="chart" id="train-reward"></div>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Evaluation lap time</h2>
+          <p>Deterministic policy on held-out seeds at each checkpoint. Gaps are checkpoints where no lap finished.</p>
+        </div>
+        <div class="legend" id="eval-legend"></div>
+        <div class="chart" id="eval-laps"></div>
+      </section>
+    </div>
+  </section>
 
   <div class="two">
     <section class="card">
@@ -144,7 +170,7 @@ details pre { font-size: 12px; overflow-x: auto; background: var(--bg); padding:
   <section class="card">
     <div class="card-head">
       <h2>Speed trace</h2>
-      <p>Best baseline lap against the limit lap. Shaded bands are corners. The baseline brakes earlier and carries less speed through every corner.</p>
+      <p>Best laps against the limit lap. Shaded bands are corners. The baseline brakes earlier and carries less speed through every corner.</p>
     </div>
     <div class="legend" id="speed-legend"></div>
     <div class="chart" id="speed"></div>
@@ -161,8 +187,9 @@ details pre { font-size: 12px; overflow-x: auto; background: var(--bg); padding:
   <section class="card">
     <div class="card-head">
       <h2>Throttle and brake</h2>
-      <p>Best baseline lap. Positive is throttle, negative is braking, as a fraction of the car's peak.</p>
+      <p>Best laps. Positive is throttle, negative is braking, as a fraction of the car's peak.</p>
     </div>
+    <div class="legend" id="throttle-legend"></div>
     <div class="chart" id="throttle"></div>
   </section>
 
@@ -274,49 +301,61 @@ details pre { font-size: 12px; overflow-x: auto; background: var(--bg); padding:
     });
   }
 
-  // ---------- line chart over lap distance ----------
+  // ---------- line chart (shared x; null values break the line) ----------
+  const distFmt = (v) => (v >= 1000 ? (v / 1000).toFixed(v % 1000 ? 1 : 0) + " km" : v + " m");
   function lineChart(container, opt) {
     container.replaceChildren();
     const W = Math.max(container.clientWidth, 280), H = opt.height || 220;
-    const m = { l: 46, r: 12, t: 18, b: 26 };
+    const m = { l: 50, r: 12, t: 18, b: 26 };
     const x = opt.x;
-    const xMax = x[x.length - 1];
+    const xMin = opt.xMin !== undefined ? opt.xMin : 0, xMax = x[x.length - 1];
+    const xFmt = opt.xFmt || distFmt;
+    const tipHead = opt.tipHead || ((xv) => Math.round(xv) + " m");
     let lo = Infinity, hi = -Infinity;
-    opt.series.forEach((s) => s.values.forEach((v) => { if (v < lo) lo = v; if (v > hi) hi = v; }));
+    const grow = (v) => { if (v === null || v === undefined) return; if (v < lo) lo = v; if (v > hi) hi = v; };
+    opt.series.forEach((s) => s.values.forEach(grow));
+    (opt.refs || []).forEach((r) => grow(r.value));
     if (opt.yMin !== undefined) lo = Math.min(lo, opt.yMin);
     if (opt.yMax !== undefined) hi = Math.max(hi, opt.yMax);
+    if (opt.yPad) { const pad = (hi - lo) * opt.yPad; lo -= pad; hi += pad; }
     const yt = niceTicks(lo, hi, 4);
     lo = Math.min(lo, yt.ticks[0]); hi = Math.max(hi, yt.ticks[yt.ticks.length - 1]);
-    const sx = (v) => m.l + (v / xMax) * (W - m.l - m.r);
+    const sx = (v) => m.l + ((v - xMin) / (xMax - xMin || 1)) * (W - m.l - m.r);
     const sy = (v) => H - m.b - ((v - lo) / (hi - lo || 1)) * (H - m.t - m.b);
     const svg = el("svg", { viewBox: "0 0 " + W + " " + H, height: H, role: "img", "aria-label": opt.label }, container);
     (opt.bands || []).forEach((b) => {
       el("rect", { x: sx(b.start_m), y: m.t, width: Math.max(1, sx(b.end_m) - sx(b.start_m)), height: H - m.t - m.b, fill: "var(--band)" }, svg);
-      if (sx(b.end_m) - sx(b.start_m) > -1) {
-        const t = el("text", { x: (sx(b.start_m) + sx(b.end_m)) / 2, y: m.t - 5, "text-anchor": "middle", class: "band-label" }, svg);
-        t.textContent = b.name;
-      }
+      const t = el("text", { x: (sx(b.start_m) + sx(b.end_m)) / 2, y: m.t - 5, "text-anchor": "middle", class: "band-label" }, svg);
+      t.textContent = b.name;
     });
     yt.ticks.forEach((v) => {
       el("line", { x1: m.l, x2: W - m.r, y1: sy(v), y2: sy(v), class: v === 0 && lo < 0 ? "baseline" : "gridline" }, svg);
-      const t = el("text", { x: m.l - 6, y: sy(v) + 4, "text-anchor": "end", class: "tick" }, svg);
+      const t = el("text", { x: m.l - 6, y: sy(v) + 4, "text-anchor": "end", fill: "var(--muted)", "font-size": "11" }, svg);
       t.textContent = opt.yFmt ? opt.yFmt(v, yt.step) : v;
-      t.setAttribute("fill", "var(--muted)"); t.setAttribute("font-size", "11");
     });
     el("line", { x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b, class: "baseline" }, svg);
-    niceTicks(0, xMax, Math.max(3, Math.floor(W / 110))).ticks.forEach((v) => {
-      if (v > xMax) return;
+    niceTicks(xMin, xMax, Math.max(3, Math.floor(W / 110))).ticks.forEach((v) => {
+      if (v > xMax || v < xMin) return;
       const t = el("text", { x: sx(v), y: H - 8, "text-anchor": "middle", fill: "var(--muted)", "font-size": "11" }, svg);
-      t.textContent = v >= 1000 ? (v / 1000).toFixed(v % 1000 ? 1 : 0) + " km" : v + " m";
+      t.textContent = xFmt(v);
+    });
+    (opt.refs || []).forEach((r) => {
+      el("line", { x1: m.l, x2: W - m.r, y1: sy(r.value), y2: sy(r.value), stroke: r.color, "stroke-width": 2 }, svg);
+      const t = el("text", { x: m.l + 6, y: sy(r.value) + (r.below ? 15 : -6), "text-anchor": "start", fill: "var(--ink-2)", "font-size": "11.5", "font-weight": "600" }, svg);
+      t.textContent = r.label;
     });
     opt.series.forEach((s) => {
-      let d = "";
-      s.values.forEach((v, i) => { d += (i ? "L" : "M") + sx(x[i]).toFixed(1) + " " + sy(v).toFixed(1); });
+      let d = "", pen = false;
+      s.values.forEach((v, i) => {
+        if (v === null || v === undefined) { pen = false; return; }
+        d += (pen ? "L" : "M") + sx(x[i]).toFixed(1) + " " + sy(v).toFixed(1); pen = true;
+      });
       if (s.area) {
         const zero = sy(Math.max(lo, Math.min(hi, 0)));
         el("path", { d: d + "L" + sx(x[x.length - 1]) + " " + zero + "L" + sx(x[0]) + " " + zero + "Z", fill: s.color, opacity: 0.1 }, svg);
       }
       el("path", { d: d, class: "series", stroke: s.color }, svg);
+      if (s.markers) s.values.forEach((v, i) => { if (v !== null && v !== undefined) el("circle", { cx: sx(x[i]), cy: sy(v), r: 4, fill: s.color, stroke: "var(--surface)", "stroke-width": 2 }, svg); });
     });
     if (opt.endLabel) {
       const s = opt.series[0], v = s.values[s.values.length - 1];
@@ -333,17 +372,26 @@ details pre { font-size: 12px; overflow-x: auto; background: var(--bg); padding:
       idx = Math.max(0, Math.min(x.length - 1, i));
       const px = sx(x[idx]);
       cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("visibility", "visible");
-      opt.series.forEach((s, k) => { dots[k].setAttribute("cx", px); dots[k].setAttribute("cy", sy(s.values[idx])); dots[k].setAttribute("visibility", "visible"); });
+      let anchorY = null;
+      opt.series.forEach((s, k) => {
+        const v = s.values[idx];
+        if (v === null || v === undefined) { dots[k].setAttribute("visibility", "hidden"); return; }
+        dots[k].setAttribute("cx", px); dots[k].setAttribute("cy", sy(v)); dots[k].setAttribute("visibility", "visible");
+        if (anchorY === null) anchorY = sy(v);
+      });
       const section = (opt.sections || []).find((b) => x[idx] >= b.start_m && x[idx] < b.end_m);
-      tipRows(tip, Math.round(x[idx]) + " m" + (section ? " · " + section.name : ""), opt.series.map((s) => ({ color: s.color, value: opt.valueFmt(s.values[idx]), label: s.label })));
+      tipRows(tip, tipHead(x[idx]) + (section ? " · " + section.name : ""), opt.series.map((s) => {
+        const v = s.values[idx];
+        return { color: s.color, value: v === null || v === undefined ? "–" : opt.valueFmt(v), label: s.label };
+      }));
       const scale = container.clientWidth / W;
-      placeTip(tip, container, px * scale, sy(opt.series[0].values[idx]) * scale);
+      placeTip(tip, container, px * scale, (anchorY === null ? H / 2 : anchorY) * scale);
     }
     function hide() { cross.setAttribute("visibility", "hidden"); dots.forEach((d) => d.setAttribute("visibility", "hidden")); tip.hidden = true; }
     hit.addEventListener("pointermove", (e) => {
       const r = svg.getBoundingClientRect();
       const px = (e.clientX - r.left) * (W / r.width);
-      const v = ((px - m.l) / (W - m.l - m.r)) * xMax;
+      const v = xMin + ((px - m.l) / (W - m.l - m.r)) * (xMax - xMin);
       let best = 0, bd = Infinity;
       for (let i = 0; i < x.length; i++) { const d = Math.abs(x[i] - v); if (d < bd) { bd = d; best = i; } }
       show(best);
@@ -568,6 +616,61 @@ details pre { font-size: 12px; overflow-x: auto; background: var(--bg); padding:
     tile("Laps finished", s.completed + " / " + s.episodes, s.off_track + " off track");
   }
 
+  let currentRun = null;
+  function trainingRun(view) {
+    const runs = view.training || [];
+    if (!runs.length) return null;
+    return runs.find((r) => r.name === currentRun) || runs.find((r) => r.name === "driver_ppo") || runs[runs.length - 1];
+  }
+
+  function renderTraining(view, run) {
+    const section = $("training-section");
+    section.hidden = !run;
+    if (!run) return;
+    const runTabs = $("run-tabs");
+    runTabs.replaceChildren();
+    runTabs.hidden = view.training.length < 2;
+    view.training.forEach((r) => {
+      const b = h("button", "tab", r.name, runTabs);
+      b.type = "button"; b.style.textTransform = "none";
+      b.setAttribute("aria-pressed", String(r.name === run.name));
+      b.setAttribute("aria-selected", String(r.name === run.name));
+      b.addEventListener("click", () => { currentRun = r.name; render(); });
+    });
+    const ev = run.eval, s = view.summary;
+    const finished = ev.mean_lap_s.map((v, i) => (v !== null && ev.completion_rate[i] === 1 ? v : null)).filter((v) => v !== null);
+    const best = run.best_lap && run.best_lap.completed ? run.best_lap.lap_time_s : null;
+    const steps = ev.timesteps.length ? ev.timesteps[ev.timesteps.length - 1] : 0;
+    const ppo = run.config.ppo || {}, env = run.config.env || {};
+    $("training-meta").textContent = "run " + run.name + " · " + steps.toLocaleString("en-US") + " decisions · action every " + ((run.config.sim && run.config.sim.dt_s) || 0.02) * (env.action_repeat || 1) + " s · γ " + ppo.gamma + " · seed " + run.config.run.seed + " · git " + String(run.meta.git_sha).slice(0, 8);
+    const t = $("training-tiles");
+    t.replaceChildren();
+    const tile = (label, value, sub, hero) => {
+      const d = h("div", "tile" + (hero ? " hero" : ""), null, t);
+      h("div", "label", label, d); h("div", "value", value, d); if (sub) h("div", "sub", sub, d);
+    };
+    tile("RL best-model lap", best === null ? "–" : best.toFixed(3) + " s", "deterministic, held-out seed", true);
+    tile("vs baseline mean", best === null || !s.mean_s ? "–" : (best - s.mean_s >= 0 ? "+" : "−") + Math.abs(best - s.mean_s).toFixed(3) + " s", s.mean_s ? "baseline " + s.mean_s.toFixed(3) + " s" : null);
+    tile("vs limit lap", best === null ? "–" : "+" + (100 * (best / s.limit_lap_time_s - 1)).toFixed(2) + "%", "limit " + s.limit_lap_time_s.toFixed(3) + " s");
+    const lastRate = ev.completion_rate.length ? ev.completion_rate[ev.completion_rate.length - 1] : 0;
+    tile("Eval laps finished", Math.round(lastRate * 100) + "%", "at the last checkpoint");
+    tile("First clean eval", (() => { const i = ev.completion_rate.findIndex((r) => r === 1); return i < 0 ? "never" : ev.timesteps[i].toLocaleString("en-US"); })(), "decisions into training");
+    const c1 = css("--series-1"), c2 = css("--series-2"), c3 = css("--series-3");
+    const kFmt = (v) => (v >= 1e6 ? (v / 1e6).toFixed(v % 1e6 ? 1 : 0) + "M" : v >= 1000 ? Math.round(v / 1000) + "k" : String(v));
+    const tr = run.train;
+    if (tr.timesteps.length) {
+      lineChart($("train-reward"), { label: "Mean training-episode reward", x: tr.timesteps, xFmt: kFmt, tipHead: (v) => kFmt(v) + " decisions", height: 220,
+        series: [{ label: "mean reward", color: c3, values: tr.mean_return }],
+        yFmt: (v, step) => v.toFixed(decimals(step)), valueFmt: (v) => (v >= 0 ? "+" : "") + v.toFixed(3) });
+    }
+    legend($("eval-legend"), [{ label: "RL agent, mean eval lap", color: c3 }, { label: "Baseline mean", color: c1 }, { label: "Limit lap", color: c2 }]);
+    const refs = [{ value: s.limit_lap_time_s, label: "Limit " + s.limit_lap_time_s.toFixed(2) + " s", color: c2, below: true }];
+    if (s.mean_s) refs.push({ value: s.mean_s, label: "Baseline " + s.mean_s.toFixed(2) + " s", color: c1 });
+    lineChart($("eval-laps"), { label: "Evaluation lap time during training", x: ev.timesteps, xFmt: kFmt, tipHead: (v) => kFmt(v) + " decisions", height: 220, refs, yPad: 0.05,
+      series: [{ label: "mean eval lap", color: c3, values: ev.mean_lap_s, markers: true }],
+      yFmt: (v, step) => v.toFixed(decimals(step)) + " s", valueFmt: (v) => v.toFixed(3) + " s" });
+  }
+
   function render() {
     const view = DATA[current];
     document.querySelectorAll(".tab").forEach((b, i) => b.setAttribute("aria-selected", String(i === current)));
@@ -578,17 +681,27 @@ details pre { font-size: 12px; overflow-x: auto; background: var(--bg); padding:
     sectorBars($("sectors"), view);
     const corners = view.sections.filter((s) => s.is_corner);
     const tr = view.trace;
-    const c1 = css("--series-1"), c2 = css("--series-2");
-    legend($("speed-legend"), [{ label: "Baseline, best lap", color: c1 }, { label: "Limit lap", color: c2 }]);
+    const c1 = css("--series-1"), c2 = css("--series-2"), c3 = css("--series-3");
+    const run = trainingRun(view);
+    renderTraining(view, run);
+    const agent = run && run.best_lap && run.best_lap.speed_kmh ? run.best_lap : null;
+    const speedLegend = [{ label: "Baseline, best lap", color: c1 }, { label: "Limit lap", color: c2 }];
+    if (agent) speedLegend.push({ label: "RL agent, best model", color: c3 });
+    legend($("speed-legend"), speedLegend);
     if (tr.speed_kmh) {
+      const speedSeries = [{ label: "Baseline", color: c1, values: tr.speed_kmh }, { label: "Limit lap", color: c2, values: tr.limit_speed_kmh }];
+      if (agent) speedSeries.push({ label: "RL agent", color: c3, values: agent.speed_kmh });
       lineChart($("speed"), { label: "Speed against lap distance", x: tr.distance_m, bands: corners, sections: view.sections, yMin: 0, height: 250,
-        series: [{ label: "Baseline", color: c1, values: tr.speed_kmh }, { label: "Limit lap", color: c2, values: tr.limit_speed_kmh }],
+        series: speedSeries,
         yFmt: (v) => v, valueFmt: (v) => v.toFixed(0) + " km/h" });
       lineChart($("delta"), { label: "Time delta to the limit lap", x: tr.distance_m, bands: corners, sections: view.sections, yMin: 0, height: 200,
         series: [{ label: "behind limit lap", color: c1, values: tr.delta_s, area: true }],
         yFmt: (v, step) => v.toFixed(decimals(step)) + " s", valueFmt: (v) => "+" + v.toFixed(3) + " s", endLabel: (v) => "+" + v.toFixed(3) + " s" });
+      const throttleSeries = [{ label: "Baseline", color: c1, values: tr.throttle }];
+      if (agent) throttleSeries.push({ label: "RL agent", color: c3, values: agent.throttle });
+      legend($("throttle-legend"), throttleSeries.length > 1 ? throttleSeries.map((x) => ({ label: x.label, color: x.color })) : []);
       lineChart($("throttle"), { label: "Throttle and brake command", x: tr.distance_m, bands: corners, sections: view.sections, yMin: -1, yMax: 1, height: 170,
-        series: [{ label: "throttle (+) / brake (−)", color: c1, values: tr.throttle }],
+        series: throttleSeries,
         yFmt: (v) => (v > 0 ? "+" : "") + v, valueFmt: (v) => (v >= 0 ? "+" : "") + v.toFixed(2) });
     }
     spread($("spread"), view);

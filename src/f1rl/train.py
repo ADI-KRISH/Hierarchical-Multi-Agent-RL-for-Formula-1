@@ -1,12 +1,15 @@
 """PPO training entry point: ``uv run python -m f1rl.train --config <yaml>``.
 
-Placeholder -- training arrives in phase 4, once `DriverEnv` (phase 2) and the
-rule-based baseline (phase 3) exist. The CLI surface is fixed here so the command
-in CLAUDE.md stays stable.
+Reads one experiment YAML from ``configs/`` and trains the driver on its track,
+logging into ``runs/<run name>/`` (see `f1rl.agents.ppo` for what's written).
 """
 
 import argparse
+import shutil
 from pathlib import Path
+
+from f1rl.agents.baseline import resolve_track
+from f1rl.agents.ppo import load_config, train
 
 
 def main() -> None:
@@ -17,8 +20,35 @@ def main() -> None:
         required=True,
         help="Experiment YAML under configs/ holding the hyperparameters.",
     )
-    parser.parse_args()
-    raise SystemExit("f1rl.train is not implemented yet (roadmap phase 4).")
+    parser.add_argument("--runs", type=Path, default=Path("runs"))
+    parser.add_argument(
+        "--timesteps", type=int, default=None, help="Override run.total_timesteps."
+    )
+    parser.add_argument(
+        "--overwrite", action="store_true", help="Replace an existing run folder."
+    )
+    args = parser.parse_args()
+
+    config = load_config(args.config)
+    if args.timesteps is not None:
+        from dataclasses import replace
+
+        config = replace(
+            config, run=replace(config.run, total_timesteps=args.timesteps)
+        )
+    run_dir = args.runs / config.run.name
+    if run_dir.exists():
+        if not args.overwrite:
+            raise SystemExit(f"{run_dir} exists -- pass --overwrite or rename the run.")
+        shutil.rmtree(run_dir)
+
+    track = resolve_track(config.run.track)
+    print(
+        f"Training {config.run.name}: {config.run.total_timesteps:,} steps on "
+        f"{config.run.track} ({track.total_length_m:.0f} m), seed {config.run.seed}"
+    )
+    train(config, track, run_dir)
+    print(f"Done. Logs and models in {run_dir}/")
 
 
 if __name__ == "__main__":

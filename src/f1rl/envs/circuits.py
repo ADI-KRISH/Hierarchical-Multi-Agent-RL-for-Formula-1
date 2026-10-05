@@ -18,15 +18,12 @@ from pathlib import Path
 
 import numpy as np
 
+from f1rl.config import DEFAULT_TRACK_WIDTH_M
 from f1rl.envs.track import Segment, Track
 
 DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 CIRCUIT_CACHE_DIR = DATA_DIR / "circuits"
 FASTF1_CACHE_DIR = DATA_DIR / "fastf1_cache"
-
-#: FastF1 has no track-width channel -- this is a design choice, same
-#: treatment as `envs.track.Segment.width_m`'s own default.
-DEFAULT_TRACK_WIDTH_M = 12.0
 
 _POSITION_UNITS_PER_M = 10.0  # see module docstring
 
@@ -76,18 +73,21 @@ def segments_from_position(
     """Resample a closed-lap (x, y) trace by arc length and compute curvature.
 
     Pure function (no network): given any distance-parameterized closed-loop
-    path, returns [[length_m, curvature_per_m], ...] stations `step_m` apart.
-    A real position trace is noisy, so the resampled path is smoothed --
-    wrap-around, since a lap is a closed loop -- before differentiating twice
-    (position -> heading -> curvature), which is what actually needs it.
+    path, returns [[length_m, curvature_per_m], ...] stations `step_m` apart
+    whose lengths sum to the full lap. The trace's last point is taken to meet
+    its first, so the path is treated as periodic throughout. A real position
+    trace is noisy, so the resampled path is smoothed -- wrap-around -- before
+    differentiating twice (position -> heading -> curvature), which is what
+    actually needs it.
     """
     n = max(8, round((distance[-1] - distance[0]) / step_m))
     ds = (distance[-1] - distance[0]) / n
-    grid = distance[0] + ds * np.arange(n + 1)
+    grid = distance[0] + ds * np.arange(n)  # n stations; the lap closes the loop
     gx = _smooth_periodic(np.interp(grid, distance, x))
     gy = _smooth_periodic(np.interp(grid, distance, y))
-    heading = np.unwrap(np.arctan2(np.diff(gy), np.diff(gx)))
-    curvature = _smooth_periodic(np.diff(heading) / ds)
+    heading = np.arctan2(np.roll(gy, -1) - gy, np.roll(gx, -1) - gx)
+    turn = np.angle(np.exp(1j * (np.roll(heading, -1) - heading)))  # wrap to +-pi
+    curvature = _smooth_periodic(turn / ds)
     return [[ds, float(c)] for c in curvature]
 
 

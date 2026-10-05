@@ -17,6 +17,11 @@ is what makes a run reproducible from its logged config plus its seed.
 from dataclasses import dataclass
 from typing import Final
 
+#: Track width (m) where no data gives one -- FastF1 has no width channel. 12 m
+#: is the minimum width the FIA sets for new permanent circuits (FIA International
+#: Sporting Code, Appendix O), so a real track is at least this wide.
+DEFAULT_TRACK_WIDTH_M: Final = 12.0
+
 # Standard acceleration of gravity, BIPM SI Brochure (9th ed.), exact by definition.
 GRAVITY_M_S2: Final = 9.80665
 
@@ -78,15 +83,42 @@ class SimParams:
 
 @dataclass(frozen=True)
 class DriverEnvParams:
-    """Tunables for `DriverEnv`'s observation/reward shaping.
+    """Tunables for `DriverEnv`'s dynamics, observation, and reward shaping.
 
     Simulation design choices, not measured F1 quantities -- see `SimParams`.
     """
 
-    lookahead_m: float = 50.0  # how far ahead the "next corner" observation looks.
-    curvature_norm_per_m: float = 0.1  # curvature (1/m) that normalizes obs to +-1.
+    # Edges (m) of the lookahead windows: the observation reports the slowest
+    # corner speed limit in 0-25 m, 25-50 m, ... ahead. The farthest must cover a
+    # full-speed stop for a slow hairpin: (97^2 - 20^2) / (2 * 5 g) ~ 92 m for
+    # `EXAMPLE_CAR`.
+    lookahead_m: tuple[float, ...] = (25.0, 50.0, 100.0, 150.0)
     drift_gain_m_s_per_g: float = 5.0  # forced lateral drift speed per g over grip.
-    steer_gain_m_s_per_g: float = 5.0  # lateral speed per g of *unused* grip budget
-    # spent steering -- steering can only correct within whatever lateral grip the
-    # corner isn't already using, it can't out-steer physics.
+    # Steering turns the velocity vector at most this far off the track direction,
+    # as a lateral/forward speed ratio (0.1 ~ 5.7 deg) -- scaled by the fraction of
+    # lateral grip the corner leaves unused, so a stationary car can't move sideways
+    # and steering can't out-steer physics.
+    max_heading_ratio: float = 0.1
     off_track_penalty: float = 1.0  # reward subtracted, episode ends, when exceeded.
+    # Reward subtracted per simulated second. Progress pays 1.0 per lap whatever the
+    # pace, so this is what makes a faster lap score higher.
+    time_penalty_per_s: float = 0.01
+    # Reset draws the starting lateral offset uniformly from [0, this], from the
+    # env's seeded RNG -- so episodes differ but stay reproducible.
+    start_offset_max_m: float = 1.0
+
+
+@dataclass(frozen=True)
+class BaselineParams:
+    """Tunables for the rule-based baseline driver (phase 3).
+
+    Design choices for a scripted driver, not measured F1 quantities.
+    """
+
+    # Fraction of the car's grip the baseline's braking points/corner speeds are
+    # planned for -- a margin a fixed script needs, since it can't react.
+    grip_margin: float = 0.97
+    speed_gain_per_m_s: float = 0.5  # throttle command per m/s below target speed.
+    # Std-dev of Gaussian noise on the throttle command: the "driver" is not a
+    # perfect actuator, which is what makes 20 runs differ.
+    throttle_noise_std: float = 0.1

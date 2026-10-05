@@ -7,8 +7,8 @@ A reinforcement learning driver agent that learns to lap a custom Formula 1
 track simulator faster than a rule-based baseline. Stable Baselines3 (PPO) on a
 custom Gymnasium environment.
 
-**Status:** phase 2 -- Gymnasium `DriverEnv` on real circuit geometry; no
-baseline or training yet. See `PROGRESS.md` for what is done and what is left,
+**Status:** phase 3 -- Gymnasium `DriverEnv` plus a rule-based baseline driver
+with lap analytics; no RL training yet. See `PROGRESS.md` for what is done and what is left,
 `docs/roadmap.md` for the build plan, and `docs/context.md` for the long-term
 vision.
 
@@ -66,4 +66,11 @@ uv sync            # create the env from uv.lock
 uv run pytest      # tests
 uv run ruff check  # lint
 uv run mypy src/   # type check
+
+# Phase 3: run the rule-based baseline, then build the HTML report
+uv run python -m f1rl.agents.baseline --track technical --episodes 20
+uv run python -m f1rl.report          # -> runs/baseline/report.html
 ```
+
+Tracks: `oval`, `technical` (synthetic), or a real circuit as
+`<year>:<grand prix>`, e.g. `2023:Monaco` (downloads FastF1 data on first use).

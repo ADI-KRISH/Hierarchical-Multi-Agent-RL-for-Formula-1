@@ -292,10 +292,10 @@ def evaluate_baseline(
                 100 * (summary.mean_s / limit_lap_s - 1) if summary.mean_s else None
             ),
         },
-        "limit_profile": {
-            "distance_m": limit_distance[:: analytics.telemetry_every_n_steps],
-            "time_s": limit_time[:: analytics.telemetry_every_n_steps],
-            "speed_ms": limit_ms[:: analytics.telemetry_every_n_steps],
+        "limit_profile": {  # full resolution, finish line included
+            "distance_m": [round(d, 3) for d in limit_distance],
+            "time_s": [round(t, 4) for t in limit_time],
+            "speed_ms": [round(v, 3) for v in limit_ms],
         },
         "sections": [asdict(s) for s in sections],
         "map": {

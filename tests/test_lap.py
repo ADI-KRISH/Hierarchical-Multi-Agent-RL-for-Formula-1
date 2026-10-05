@@ -7,6 +7,7 @@ from f1rl.envs.track import Segment, Track, curvature_at, example_track
 from f1rl.models.car import max_corner_speed_ms
 from f1rl.models.lap import (
     lap_time_s,
+    max_safe_speed_ms,
     speed_profile_ms,
     standing_start_lap_time_s,
     standing_start_profile_ms,
@@ -71,4 +72,35 @@ def test_standing_start_matches_closed_form_on_a_short_straight() -> None:
     expected = math.sqrt(2 * 100.0 / accel)
     assert standing_start_lap_time_s(EXAMPLE_CAR, track, step_m=0.5) == pytest.approx(
         expected, rel=1e-3
+    )
+
+
+def test_max_safe_speed_is_top_speed_far_from_any_corner() -> None:
+    track = Track(segments=(Segment(5000.0, 0.0), Segment(100.0, 0.01)))
+    assert max_safe_speed_ms(EXAMPLE_CAR, track, 100.0) == EXAMPLE_CAR.max_speed_ms
+
+
+def test_max_safe_speed_is_the_corner_limit_inside_a_corner() -> None:
+    track = Track(segments=(Segment(5000.0, 0.0), Segment(500.0, 1 / 50)))
+    limit = max_corner_speed_ms(EXAMPLE_CAR, 1 / 50)
+    assert max_safe_speed_ms(EXAMPLE_CAR, track, 5100.0) == pytest.approx(limit)
+
+
+def test_max_safe_speed_follows_the_braking_curve_before_a_corner() -> None:
+    """d metres before a corner, the car may be doing sqrt(v_c^2 + 2 a d)."""
+    track = Track(segments=(Segment(5000.0, 0.0), Segment(500.0, 1 / 50)))
+    limit = max_corner_speed_ms(EXAMPLE_CAR, 1 / 50)
+    braking = EXAMPLE_CAR.max_braking_g * GRAVITY_M_S2
+    for d in (5.0, 30.0, 60.0):
+        expected = min(math.sqrt(limit**2 + 2 * braking * d), EXAMPLE_CAR.max_speed_ms)
+        safe = max_safe_speed_ms(EXAMPLE_CAR, track, 5000.0 - d)
+        assert safe == pytest.approx(expected)
+
+
+def test_max_safe_speed_sees_a_corner_across_the_finish_line() -> None:
+    track = Track(segments=(Segment(50.0, 1 / 30), Segment(1000.0, 0.0)))
+    limit = max_corner_speed_ms(EXAMPLE_CAR, 1 / 30)
+    assert max_safe_speed_ms(EXAMPLE_CAR, track, 1049.0) < EXAMPLE_CAR.max_speed_ms
+    assert max_safe_speed_ms(EXAMPLE_CAR, track, 1049.99) == pytest.approx(
+        limit, rel=0.01
     )

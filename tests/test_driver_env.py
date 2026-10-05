@@ -200,3 +200,70 @@ def test_observation_sees_a_slow_corner_far_enough_ahead_to_brake() -> None:
     farthest_lookahead = env._observation()[-3]
 
     assert farthest_lookahead < 0.5
+
+
+def test_action_repeat_holds_the_action_and_keeps_lap_timing() -> None:
+    """Repeating each action 5 physics steps must give the same lap (same time,
+    same summed reward) as sending it 5 times at 1x."""
+    straight_loop = Track(segments=(Segment(length_m=500.0, curvature_per_m=0.0),))
+    once = DriverEnv(EXAMPLE_CAR, straight_loop, SimParams(seed=0))
+    held = DriverEnv(
+        EXAMPLE_CAR, straight_loop, SimParams(seed=0), DriverEnvParams(action_repeat=5)
+    )
+    once.reset(seed=0)
+    held.reset(seed=0)
+
+    once_return, once_info = _drive(once, FULL_THROTTLE_NO_STEER)
+    held_return, held_info = _drive(held, FULL_THROTTLE_NO_STEER)
+
+    assert held_info["lap_time_s"] == pytest.approx(once_info["lap_time_s"])
+    assert held_return == pytest.approx(once_return)
+
+
+def test_being_past_a_braking_point_is_penalized_in_proportion() -> None:
+    """Graded overspeed: of two cars that will both run off at a corner, the one
+    that braked harder is penalized less -- the gradient toward braking that the
+    off-track cliff alone doesn't give."""
+    track = Track(segments=(Segment(1000.0, 0.0), Segment(200.0, 1 / 20)))
+    returns = []
+    for brake in (0.0, -0.3):
+        env = DriverEnv(EXAMPLE_CAR, track, SimParams(seed=0))
+        env.reset(seed=0)
+        total = 0.0
+        info: dict[str, Any] = {}
+        terminated = truncated = False
+        while not (terminated or truncated):
+            late = info.get("distance_m", 0.0) > 800.0
+            action = np.array([brake if late else 1.0, -1.0], dtype=np.float32)
+            _, reward, terminated, truncated, info = env.step(action)
+            total += reward
+        assert info["off_track"]
+        returns.append(total)
+
+    assert returns[1] > returns[0]
+
+
+def test_a_car_stopped_on_track_is_retired_like_an_off() -> None:
+    """Regression: parking before a hard corner used to be a free way to dodge
+    the off-track penalty. Stalling now ends the episode with that same penalty."""
+    env = _env()
+    env.reset(seed=0)
+    for _ in range(50):  # get rolling, then brake to a stop and stay there
+        env.step(FULL_THROTTLE_NO_STEER)
+    total, info = _drive(env, np.array([-1.0, 0.0], dtype=np.float32))
+
+    assert info["stalled"] is True
+    assert info["off_track"] is False
+    timeout_s = DriverEnvParams().stall_timeout_s
+    assert info["elapsed_s"] < 1.0 + 1.0 + timeout_s  # rolling + braking + timeout
+    assert total < -DriverEnvParams().off_track_penalty + 0.1
+
+
+def test_braking_margin_observation_turns_negative_past_a_braking_point() -> None:
+    env = DriverEnv(EXAMPLE_CAR, technical_track(), SimParams(seed=0))
+    obs, _info = env.reset(seed=0)
+    assert obs[3] == 1.0  # at rest: far below any safe speed (clipped)
+
+    env._distance_m, env._speed_ms = 990.0, EXAMPLE_CAR.max_speed_ms  # hairpin ahead
+    assert env._observation()[3] == -1.0
+    assert env.observation_space.contains(env._observation())

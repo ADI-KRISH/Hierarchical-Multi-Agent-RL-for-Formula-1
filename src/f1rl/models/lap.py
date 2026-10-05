@@ -10,10 +10,11 @@ iterations converge the closed loop (the last station's exit speed feeds
 the first).
 """
 
+import bisect
 import itertools
 import math
 
-from f1rl.config import CarParams
+from f1rl.config import GRAVITY_M_S2, CarParams
 from f1rl.envs.track import Track, curvature_at
 from f1rl.models.car import (
     accel_limited_speed_ms,
@@ -53,6 +54,32 @@ def lap_time_s(
         avg_speed = (speeds[k] + speeds[(k + 1) % n]) / 2
         total += ds / avg_speed
     return total
+
+
+def max_safe_speed_ms(car: CarParams, track: Track, distance_m: float) -> float:
+    """Fastest the car can be going at `distance_m` and still brake down to every
+    corner's grip limit ahead of it -- i.e. it hasn't yet passed a braking point.
+
+    Looks one full-speed stopping distance ahead; nothing farther can constrain
+    the car. Exact for the segment model: each segment's limit applies from its
+    start (or from here, for the segment the car is in).
+    """
+    horizon_m = car.max_speed_ms**2 / (2 * car.max_braking_g * GRAVITY_M_S2)
+    lap_m = track.total_length_m
+    starts = track.segment_starts_m
+    n = len(track.segments)
+    position_m = distance_m % lap_m
+    index = bisect.bisect_right(starts, position_m) - 1
+    ahead_m = 0.0  # distance from here to the start of the segment at `index`
+    safe = car.max_speed_ms
+    while ahead_m <= horizon_m:
+        segment = track.segments[index % n]
+        corner_ms = max_corner_speed_ms(car, segment.curvature_per_m)
+        safe = min(safe, brake_limited_speed_ms(car, corner_ms, ahead_m))
+        segment_end_m = starts[index % n] + segment.length_m + lap_m * (index // n)
+        ahead_m = segment_end_m - position_m
+        index += 1
+    return safe
 
 
 def standing_start_profile_ms(

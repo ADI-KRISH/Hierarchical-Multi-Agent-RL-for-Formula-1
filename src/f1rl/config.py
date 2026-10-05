@@ -93,6 +93,10 @@ class DriverEnvParams:
     # full-speed stop for a slow hairpin: (97^2 - 20^2) / (2 * 5 g) ~ 92 m for
     # `EXAMPLE_CAR`.
     lookahead_m: tuple[float, ...] = (25.0, 50.0, 100.0, 150.0)
+    # The observation's braking margin, (safe speed - speed), is divided by this
+    # and clipped to +-1: the brake-or-not decision then turns on an input of
+    # order 1, not on the difference of two near-equal speed fractions.
+    margin_obs_scale_ms: float = 20.0
     drift_gain_m_s_per_g: float = 5.0  # forced lateral drift speed per g over grip.
     # Steering turns the velocity vector at most this far off the track direction,
     # as a lateral/forward speed ratio (0.1 ~ 5.7 deg) -- scaled by the fraction of
@@ -103,6 +107,20 @@ class DriverEnvParams:
     # Reward subtracted per simulated second. Progress pays 1.0 per lap whatever the
     # pace, so this is what makes a faster lap score higher.
     time_penalty_per_s: float = 0.01
+    # Reward subtracted per second the car is past a braking point (faster than
+    # `max_safe_speed_ms`), scaled by the overspeed as a fraction of top speed.
+    # Graded, so braking a little earlier always scores a little better -- the
+    # off-track penalty alone is a cliff with no gradient toward braking.
+    overspeed_penalty_per_s: float = 1.0
+    # A car slower than `stall_speed_ms` for `stall_timeout_s` has stopped on
+    # track: the episode ends like an off-track (same penalty). Without this,
+    # parking before a hard corner is a risk-free way to dodge the off-track
+    # penalty, and agents learn to do exactly that.
+    stall_speed_ms: float = 2.0
+    stall_timeout_s: float = 3.0
+    # Physics steps each action is held for. 1 = a decision every `dt_s`; 5 = every
+    # 0.1 s, which makes exploration correlated in time and episodes 5x shorter.
+    action_repeat: int = 1
     # Reset draws the starting lateral offset uniformly from [0, this], from the
     # env's seeded RNG -- so episodes differ but stay reproducible.
     start_offset_max_m: float = 1.0

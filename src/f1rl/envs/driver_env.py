@@ -21,6 +21,7 @@ from f1rl.envs.track import (
     width_at,
 )
 from f1rl.models.car import max_corner_speed_ms
+from f1rl.models.lap import max_safe_speed_ms
 
 ObsType = NDArray[np.float32]
 ActType = NDArray[np.float32]
@@ -29,8 +30,12 @@ ActType = NDArray[np.float32]
 class DriverEnv(gym.Env[ObsType, ActType]):
     """One car lapping `track`, controlled by throttle/brake and steering.
 
-    Observation (Box, shape (4 + len(lookahead_m),)), every term in [0, 1]:
-    [speed / max_speed, corner speed limit here / max_speed, the lowest corner
+    Observation (Box, shape (6 + len(lookahead_m),)), every term in [0, 1]
+    except the signed braking margin:
+    [speed / max_speed, corner speed limit here / max_speed, the highest speed
+    from which every corner ahead can still be made (`max_safe_speed_ms`, the
+    braking-marker boards) / max_speed, the braking margin (safe speed - speed)
+    / `margin_obs_scale_ms` clipped to [-1, 1], the lowest corner
     speed limit in each lookahead window / max_speed, fraction of the lap
     completed, lateral offset / half track width]. The windows run between
     consecutive `lookahead_m` distances (0-25 m, 25-50 m, ... by default), and
@@ -41,7 +46,11 @@ class DriverEnv(gym.Env[ObsType, ActType]):
     throttle = braking; negative steer = toward the racing line).
     Reward: distance covered this step as a fraction of the lap (a full lap pays
     1.0), minus `time_penalty_per_s` per simulated second -- so a faster lap
-    scores higher -- and a fixed penalty plus episode end on running off track.
+    scores higher -- minus `overspeed_penalty_per_s` per second spent past a
+    braking point (scaled by how far over), and a fixed penalty plus episode end
+    on running off track or stalling (below `stall_speed_ms` for
+    `stall_timeout_s`: a car stopped on track is retired). Each action is held
+    for `action_repeat` physics steps; the step's reward is their sum.
 
     Track limits and steering: cornering consumes lateral grip
     (`speed^2 * curvature / g`); whatever exceeds the car's `max_lateral_g` is a
@@ -56,7 +65,7 @@ class DriverEnv(gym.Env[ObsType, ActType]):
 
     `info` carries the car state each step (`distance_m`, `speed_ms`,
     `lateral_offset_m`, `elapsed_s`), how the episode ended (`off_track`,
-    `lap_completed`), and on completing the lap, `lap_time_s` interpolated to
+    `stalled`, `lap_completed`), and on completing the lap, `lap_time_s` interpolated to
     the moment the car crossed the line.
     """
 
@@ -72,12 +81,14 @@ class DriverEnv(gym.Env[ObsType, ActType]):
         self.sim = sim
         self.env_params = env_params or DriverEnvParams()
 
-        n_obs = 4 + len(self.env_params.lookahead_m)
+        n_obs = 6 + len(self.env_params.lookahead_m)
         self.action_space = gym.spaces.Box(
             low=-1.0, high=1.0, shape=(2,), dtype=np.float32
         )
+        low = np.zeros(n_obs, dtype=np.float32)
+        low[3] = -1.0  # braking margin is signed
         self.observation_space = gym.spaces.Box(
-            low=0.0, high=1.0, shape=(n_obs,), dtype=np.float32
+            low=low, high=1.0, shape=(n_obs,), dtype=np.float32
         )
 
         self._seeded = False
@@ -85,6 +96,7 @@ class DriverEnv(gym.Env[ObsType, ActType]):
         self._distance_m = 0.0
         self._lateral_offset_m = 0.0
         self._step_count = 0
+        self._stalled_s = 0.0
 
     def reset(
         self, *, seed: int | None = None, options: dict[str, Any] | None = None
@@ -103,13 +115,27 @@ class DriverEnv(gym.Env[ObsType, ActType]):
             self.np_random.uniform(0.0, self.env_params.start_offset_max_m)
         )
         self._step_count = 0
-        return self._observation(), self._info(off_track=False, lap_completed=False)
+        self._stalled_s = 0.0
+        info = self._info(off_track=False, lap_completed=False)
+        info["stalled"] = False
+        return self._observation(), info
 
     def step(
         self, action: ActType
     ) -> tuple[ObsType, float, bool, bool, dict[str, Any]]:
         command = float(np.clip(action[0], -1.0, 1.0))
         steer = float(np.clip(action[1], -1.0, 1.0))
+        total = 0.0
+        for _ in range(self.env_params.action_repeat):
+            reward, terminated, truncated, info = self._physics_step(command, steer)
+            total += reward
+            if terminated or truncated:
+                break
+        return self._observation(), total, terminated, truncated, info
+
+    def _physics_step(
+        self, command: float, steer: float
+    ) -> tuple[float, bool, bool, dict[str, Any]]:
         dt = self.sim.dt_s
 
         peak_g = self.car.max_accel_g if command >= 0 else self.car.max_braking_g
@@ -145,22 +171,31 @@ class DriverEnv(gym.Env[ObsType, ActType]):
 
         width_here = width_at(self.track, self._distance_m)
         off_track = self._lateral_offset_m > width_here / 2
+        if self._speed_ms < self.env_params.stall_speed_ms:
+            self._stalled_s += dt
+        else:
+            self._stalled_s = 0.0
+        stalled = self._stalled_s >= self.env_params.stall_timeout_s
 
         lap_length_m = self.track.total_length_m
         reward = distance_step / lap_length_m - self.env_params.time_penalty_per_s * dt
-        if off_track:
+        safe_ms = max_safe_speed_ms(self.car, self.track, self._distance_m)
+        overspeed = max(0.0, self._speed_ms - safe_ms) / self.car.max_speed_ms
+        reward -= self.env_params.overspeed_penalty_per_s * overspeed * dt
+        if off_track or stalled:
             reward -= self.env_params.off_track_penalty
 
         lap_completed = self._distance_m >= lap_length_m
-        terminated = off_track or lap_completed
+        terminated = off_track or stalled or lap_completed
         truncated = self._step_count >= self.sim.max_episode_steps
 
         info = self._info(off_track=off_track, lap_completed=lap_completed)
+        info["stalled"] = stalled
         if lap_completed:
             # Interpolate within the final step to when the car crossed the line.
             fraction = (lap_length_m - distance_before) / distance_step
             info["lap_time_s"] = (self._step_count - 1 + fraction) * dt
-        return self._observation(), reward, terminated, truncated, info
+        return reward, terminated, truncated, info
 
     def _info(self, *, off_track: bool, lap_completed: bool) -> dict[str, Any]:
         return {
@@ -188,12 +223,19 @@ class DriverEnv(gym.Env[ObsType, ActType]):
 
     def _observation(self) -> ObsType:
         position_m = self._distance_m % self.track.total_length_m
+        safe_ms = max_safe_speed_ms(self.car, self.track, position_m)
         width_here = width_at(self.track, position_m)
         offset_fraction = self._lateral_offset_m / (width_here / 2)
         return np.array(
             [
                 self._speed_ms / self.car.max_speed_ms,
                 self._speed_limit_fraction(curvature_at(self.track, position_m)),
+                safe_ms / self.car.max_speed_ms,
+                np.clip(
+                    (safe_ms - self._speed_ms) / self.env_params.margin_obs_scale_ms,
+                    -1.0,
+                    1.0,
+                ),
                 *self._lookahead_limits(position_m),
                 position_m / self.track.total_length_m,
                 min(offset_fraction, 1.0),

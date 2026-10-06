@@ -141,6 +141,16 @@ algorithm (SAC, also in SB3, and listed for the driver in `docs/context.md`), or
 curriculum that starts episodes near braking points so late-braking is practised far
 more often than once per lap.
 
+### Racing-line research (2026-10-06)
+`docs/racing_line_research.md` reviews seven open-source racing-line projects and
+finds the bigger reason the driver is slow: **our env has no racing line**. The car is
+locked to the centreline, so it can't use the track's width. On TUM's 25 real tracks,
+driving TUM's minimum-curvature line instead of the centreline is **9.2% faster on
+average** in our own physics (`scripts/raceline_gain.py`), about 6x the RL driver's
+current gap to the baseline. The doc lays out a plan: TUM's tracks with real widths,
+a minimum-curvature optimal reference, Frenet-frame steering (env v2), and AM-RL-style
+action mapping, random starts and SAC/TD3 trained across tracks with held-out tests.
+
 ## Left
 
 | Phase | What | State |

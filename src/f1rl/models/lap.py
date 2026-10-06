@@ -82,6 +82,36 @@ def max_safe_speed_ms(car: CarParams, track: Track, distance_m: float) -> float:
     return safe
 
 
+def distance_to_braking_point_m(
+    car: CarParams, track: Track, distance_m: float, speed_ms: float, horizon_m: float
+) -> float:
+    """How far the car can keep going at `speed_ms` before it must start braking
+    (at full braking) to make every corner ahead -- the "marker boards".
+
+    Negative once the car is past a braking point. Corners farther than
+    `horizon_m` are not considered, so the result is capped at `horizon_m`.
+    Pure function; exact for the segment model, like `max_safe_speed_ms`.
+    """
+    decel = car.max_braking_g * GRAVITY_M_S2
+    lap_m = track.total_length_m
+    starts = track.segment_starts_m
+    n = len(track.segments)
+    position_m = distance_m % lap_m
+    index = bisect.bisect_right(starts, position_m) - 1
+    ahead_m = 0.0  # distance from here to the start of the segment at `index`
+    room = horizon_m
+    while ahead_m <= horizon_m:
+        segment = track.segments[index % n]
+        corner_ms = max_corner_speed_ms(car, segment.curvature_per_m)
+        if speed_ms > corner_ms:
+            braking_m = (speed_ms**2 - corner_ms**2) / (2 * decel)
+            room = min(room, ahead_m - braking_m)
+        segment_end_m = starts[index % n] + segment.length_m + lap_m * (index // n)
+        ahead_m = segment_end_m - position_m
+        index += 1
+    return room
+
+
 def standing_start_profile_ms(
     car: CarParams, track: Track, step_m: float = 2.0, iterations: int = 3
 ) -> list[float]:

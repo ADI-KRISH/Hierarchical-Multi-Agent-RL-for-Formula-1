@@ -6,6 +6,7 @@ from f1rl.config import EXAMPLE_CAR, GRAVITY_M_S2
 from f1rl.envs.track import Segment, Track, curvature_at, example_track
 from f1rl.models.car import max_corner_speed_ms
 from f1rl.models.lap import (
+    distance_to_braking_point_m,
     lap_time_s,
     max_safe_speed_ms,
     speed_profile_ms,
@@ -104,3 +105,16 @@ def test_max_safe_speed_sees_a_corner_across_the_finish_line() -> None:
     assert max_safe_speed_ms(EXAMPLE_CAR, track, 1049.99) == pytest.approx(
         limit, rel=0.01
     )
+
+
+def test_distance_to_braking_point_counts_down_to_zero_at_the_braking_curve() -> None:
+    track = Track(segments=(Segment(5000.0, 0.0), Segment(500.0, 1 / 50)))
+    corner = max_corner_speed_ms(EXAMPLE_CAR, 1 / 50)
+    speed = 80.0
+    braking = (speed**2 - corner**2) / (2 * EXAMPLE_CAR.max_braking_g * GRAVITY_M_S2)
+    for room in (250.0, 100.0, 0.0, -20.0):
+        at = 5000.0 - braking - room
+        got = distance_to_braking_point_m(EXAMPLE_CAR, track, at, speed, 300.0)
+        assert got == pytest.approx(room)
+    # Already slower than the corner needs: nothing to brake for, capped at horizon.
+    assert distance_to_braking_point_m(EXAMPLE_CAR, track, 4990.0, 10.0, 300.0) == 300.0

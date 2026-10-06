@@ -279,3 +279,31 @@ def test_time_penalty_per_limit_lap_charges_the_same_per_limit_lap() -> None:
         env = DriverEnv(EXAMPLE_CAR, track, SimParams(seed=0), params)
         limit_s = standing_start_lap_time_s(EXAMPLE_CAR, track)
         assert env._time_penalty_per_s * limit_s == pytest.approx(1.2)
+
+
+def test_speed_use_reward_pays_more_for_running_closer_to_the_safe_speed() -> None:
+    params = DriverEnvParams(speed_use_reward_per_s=1.0, time_penalty_per_s=0.0)
+    straight_loop = Track(segments=(Segment(length_m=5000.0, curvature_per_m=0.0),))
+    rewards = []
+    for throttle in (0.3, 1.0):
+        env = DriverEnv(EXAMPLE_CAR, straight_loop, SimParams(seed=0), params)
+        env.reset(seed=0)
+        total = 0.0
+        for _ in range(200):
+            _, reward, _, _, _ = env.step(np.array([throttle, 0.0], dtype=np.float32))
+            total += reward
+        rewards.append(total)
+    assert rewards[1] > rewards[0]
+
+
+def test_braking_point_countdown_is_an_optional_last_observation_term() -> None:
+    params = DriverEnvParams(brake_point_horizon_m=300.0)
+    env = DriverEnv(EXAMPLE_CAR, technical_track(), SimParams(seed=0), params)
+    check_env(env, skip_render_check=True)
+    obs, _ = env.reset(seed=0)
+    base_shape = _env().observation_space.shape
+    assert base_shape is not None
+    assert obs.shape == (base_shape[0] + 1,)
+    assert obs[-1] == 1.0  # at rest: no braking point within 300 m
+    env._distance_m, env._speed_ms = 900.0, EXAMPLE_CAR.max_speed_ms
+    assert -1.0 <= env._observation()[-1] < 0.5  # hairpin braking point is near

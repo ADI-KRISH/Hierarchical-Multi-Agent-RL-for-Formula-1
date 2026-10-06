@@ -108,6 +108,12 @@ class DriverEnvParams:
     # and clipped to +-1: the brake-or-not decision then turns on an input of
     # order 1, not on the difference of two near-equal speed fractions.
     margin_obs_scale_ms: float = 20.0
+    # Braking-point countdown in the observation: distance left before the car
+    # must brake (at its current speed) for any corner within this horizon,
+    # divided by it, clipped to [-1, 1]. The speed margin above only "wakes up"
+    # within ~2-3 decisions of the braking point at high speed; this one counts
+    # down from 300 m, like a driver's marker boards. 0 = leave it out.
+    brake_point_horizon_m: float = 0.0
     drift_gain_m_s_per_g: float = 5.0  # forced lateral drift speed per g over grip.
     # Steering turns the velocity vector at most this far off the track direction,
     # as a lateral/forward speed ratio (0.1 ~ 5.7 deg) -- scaled by the fraction of
@@ -129,6 +135,11 @@ class DriverEnvParams:
     # Graded, so braking a little earlier always scores a little better -- the
     # off-track penalty alone is a cliff with no gradient toward braking.
     overspeed_penalty_per_s: float = 1.0
+    # Reward per second for using the speed available: min(v, v_safe) / v_safe.
+    # Makes running below the safe speed an immediate cost, instead of a tiny
+    # long-run one (lifting 100 m early costs ~0.003 of progress/time reward,
+    # lost among off-track and overspeed penalties of ~1). 0 = off.
+    speed_use_reward_per_s: float = 0.0
     # A car slower than `stall_speed_ms` for `stall_timeout_s` has stopped on
     # track: the episode ends like an off-track (same penalty). Without this,
     # parking before a hard corner is a risk-free way to dodge the off-track

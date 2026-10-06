@@ -21,7 +21,11 @@ from f1rl.envs.track import (
     width_at,
 )
 from f1rl.models.car import max_corner_speed_ms
-from f1rl.models.lap import max_safe_speed_ms, standing_start_lap_time_s
+from f1rl.models.lap import (
+    distance_to_braking_point_m,
+    max_safe_speed_ms,
+    standing_start_lap_time_s,
+)
 
 ObsType = NDArray[np.float32]
 ActType = NDArray[np.float32]
@@ -82,11 +86,15 @@ class DriverEnv(gym.Env[ObsType, ActType]):
         self.env_params = env_params or DriverEnvParams()
 
         n_obs = 6 + len(self.env_params.lookahead_m)
+        if self.env_params.brake_point_horizon_m:
+            n_obs += 1
         self.action_space = gym.spaces.Box(
             low=-1.0, high=1.0, shape=(2,), dtype=np.float32
         )
         low = np.zeros(n_obs, dtype=np.float32)
         low[3] = -1.0  # braking margin is signed
+        if self.env_params.brake_point_horizon_m:
+            low[-1] = -1.0  # so is the braking-point countdown (last term)
         self.observation_space = gym.spaces.Box(
             low=low, high=1.0, shape=(n_obs,), dtype=np.float32
         )
@@ -188,6 +196,9 @@ class DriverEnv(gym.Env[ObsType, ActType]):
         safe_ms = max_safe_speed_ms(self.car, self.track, self._distance_m)
         overspeed = max(0.0, self._speed_ms - safe_ms) / self.car.max_speed_ms
         reward -= self.env_params.overspeed_penalty_per_s * overspeed * dt
+        if self.env_params.speed_use_reward_per_s:
+            speed_use = min(self._speed_ms, safe_ms) / safe_ms
+            reward += self.env_params.speed_use_reward_per_s * speed_use * dt
         if off_track or stalled:
             reward -= self.env_params.off_track_penalty
 
@@ -232,7 +243,7 @@ class DriverEnv(gym.Env[ObsType, ActType]):
         safe_ms = max_safe_speed_ms(self.car, self.track, position_m)
         width_here = width_at(self.track, position_m)
         offset_fraction = self._lateral_offset_m / (width_here / 2)
-        return np.array(
+        obs = np.array(
             [
                 self._speed_ms / self.car.max_speed_ms,
                 self._speed_limit_fraction(curvature_at(self.track, position_m)),
@@ -248,3 +259,11 @@ class DriverEnv(gym.Env[ObsType, ActType]):
             ],
             dtype=np.float32,
         )
+        horizon_m = self.env_params.brake_point_horizon_m
+        if horizon_m:
+            room_m = distance_to_braking_point_m(
+                self.car, self.track, position_m, self._speed_ms, horizon_m
+            )
+            countdown = np.float32(np.clip(room_m / horizon_m, -1.0, 1.0))
+            obs = np.append(obs, countdown)
+        return obs

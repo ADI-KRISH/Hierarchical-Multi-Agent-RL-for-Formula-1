@@ -53,6 +53,10 @@ class RunParams:
     # Continue from this saved model (its weights; the PPO settings come from
     # this config) instead of starting from scratch.
     init_from: str | None = None
+    # Reset the policy's exploration noise (action std-dev) to this after
+    # loading `init_from` -- e.g. to fine-tune a driver near the limit, where
+    # wide noise turns well-placed braking into crashes.
+    action_std: float | None = None
     # At every eval, one lap per track is saved to eval_laps.jsonl with telemetry
     # every this many decisions -- the record of how the driving changed.
     replay_every_decisions: int = 5
@@ -435,6 +439,11 @@ def train(
         policy_kwargs["activation_fn"] = getattr(
             torch.nn, policy_kwargs["activation_fn"]
         )
+    ppo_kwargs = dict(config.ppo)
+    rate = ppo_kwargs.get("learning_rate")
+    if isinstance(rate, dict):  # {start: .., end: ..}: linear decay over the run
+        start, end = float(rate["start"]), float(rate["end"])
+        ppo_kwargs["learning_rate"] = lambda progress: end + (start - end) * progress
     model = PPO(
         "MlpPolicy",
         vec_env,
@@ -442,10 +451,13 @@ def train(
         device="cpu",
         policy_kwargs=policy_kwargs,
         verbose=0,
-        **config.ppo,
+        **ppo_kwargs,
     )
     if run.init_from:
         model.set_parameters(run.init_from, device="cpu")
+    if run.action_std is not None:
+        with torch.no_grad():
+            model.policy.log_std.fill_(float(np.log(run.action_std)))
     model.set_logger(configure(str(run_dir), ["csv"]))
     callback = LapLoggerCallback(
         run_dir,

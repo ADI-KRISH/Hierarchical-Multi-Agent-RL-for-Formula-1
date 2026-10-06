@@ -117,15 +117,19 @@ def track_view(results: dict[str, Any]) -> dict[str, Any]:
 TRAIN_CURVE_BINS = 60  # training-episode stats are averaged into this many bins
 
 
-def training_view(run_dir: Path, length_m: float) -> dict[str, Any]:
-    """Learning curves and the best lap of one PPO run, from its log files."""
+def training_view(run_dir: Path, track: str, length_m: float) -> dict[str, Any]:
+    """Learning curves, replay laps and the best lap of one PPO run on one of
+    its tracks, from its log files (single- and multi-track runs alike)."""
     config = yaml.safe_load((run_dir / "config.yaml").read_text())
+    run_tracks = _tracks_of(config)
     with (run_dir / "eval.csv").open() as f:
-        evals = list(csv.DictReader(f))
+        evals = [e for e in csv.DictReader(f) if e.get("track", run_tracks[0]) == track]
     with (run_dir / "episodes.csv").open() as f:
-        episodes = list(csv.DictReader(f))
+        episodes = [
+            e for e in csv.DictReader(f) if e.get("track", run_tracks[0]) == track
+        ]
 
-    def num(value: str) -> float | None:
+    def num(value: str | None) -> float | None:
         return float(value) if value not in ("", None) else None
 
     curve: dict[str, list[float | None]] = {
@@ -152,23 +156,14 @@ def training_view(run_dir: Path, length_m: float) -> dict[str, Any]:
     best_lap = None
     best_path = run_dir / "best_lap.json"
     if best_path.exists():
-        lap = json.loads(best_path.read_text())
-        t = lap.get("telemetry")
-        best_lap = {
-            "completed": lap["completed"],
-            "lap_time_s": lap["lap_time_s"],
-            "total_reward": lap["total_reward"],
-        }
-        if t and lap["completed"]:
-            grid = np.linspace(0.0, length_m, int(length_m // TRACE_STEP_M) + 1)
-            dist = [*t["distance_m"], length_m]
-            speed = [*t["speed_ms"], t["speed_ms"][-1]]
-            throttle = [*t["throttle"], t["throttle"][-1]]
-            best_lap["speed_kmh"] = _rounded(np.interp(grid, dist, speed) * 3.6, 1)
-            best_lap["throttle"] = _rounded(np.interp(grid, dist, throttle), 3)
+        record = json.loads(best_path.read_text())
+        lap = record["laps"].get(track) if "laps" in record else record
+        if lap is not None:
+            best_lap = _best_lap_view(lap, length_m)
 
     return {
         "name": run_dir.name,
+        "tracks": run_tracks,
         "config": config,
         "meta": json.loads((run_dir / "meta.json").read_text()),
         "eval": {
@@ -180,7 +175,57 @@ def training_view(run_dir: Path, length_m: float) -> dict[str, Any]:
         },
         "train": curve,
         "best_lap": best_lap,
+        "replays": _replays(run_dir, track),
     }
+
+
+def _best_lap_view(lap: dict[str, Any], length_m: float) -> dict[str, Any]:
+    t = lap.get("telemetry")
+    view: dict[str, Any] = {
+        "completed": lap["completed"],
+        "lap_time_s": lap["lap_time_s"],
+        "total_reward": lap["total_reward"],
+    }
+    if t and lap["completed"]:
+        grid = np.linspace(0.0, length_m, int(length_m // TRACE_STEP_M) + 1)
+        dist = [*t["distance_m"], length_m]
+        speed = [*t["speed_ms"], t["speed_ms"][-1]]
+        throttle = [*t["throttle"], t["throttle"][-1]]
+        view["speed_kmh"] = _rounded(np.interp(grid, dist, speed) * 3.6, 1)
+        view["throttle"] = _rounded(np.interp(grid, dist, throttle), 3)
+    return view
+
+
+def _replays(run_dir: Path, track: str) -> list[dict[str, Any]]:
+    """The lap driven on `track` at each eval checkpoint, for the replay view."""
+    path = run_dir / "eval_laps.jsonl"
+    if not path.exists():
+        return []
+    replays = []
+    for line in path.read_text().splitlines():
+        lap = json.loads(line)
+        if lap.get("track") != track:
+            continue
+        t = lap.get("telemetry") or {}
+        replays.append(
+            {
+                "timesteps": lap["timesteps"],
+                "completed": lap["completed"],
+                "off_track": lap["off_track"],
+                "stalled": lap.get("stalled", False),
+                "lap_time_s": lap["lap_time_s"],
+                "distance_m": round(lap["distance_m"], 1),
+                "time_s": [round(v, 2) for v in t.get("time_s", [])],
+                "pos_m": [round(v, 1) for v in t.get("distance_m", [])],
+                "speed_kmh": [round(v * 3.6) for v in t.get("speed_ms", [])],
+            }
+        )
+    return replays
+
+
+def _tracks_of(config: dict[str, Any]) -> list[str]:
+    track = config["run"]["track"]
+    return [track] if isinstance(track, str) else list(track)
 
 
 def _rounded(values: Any, digits: int) -> list[float]:
@@ -216,9 +261,9 @@ def load_views(
     views = [track_view(json.loads(p.read_text())) for p in paths]
     for view in views:
         view["training"] = [
-            training_view(run, view["length_m"])
+            training_view(run, view["name"], view["length_m"])
             for run in training_runs or []
-            if _run_track(run) == view["name"]
+            if view["name"] in _run_tracks(run)
         ]
     return views
 
@@ -232,14 +277,13 @@ def find_training_runs(runs_root: Path) -> list[Path]:
     )
 
 
-def _run_track(run_dir: Path) -> str:
-    config = yaml.safe_load((run_dir / "config.yaml").read_text())
-    return str(config["run"]["track"])
+def _run_tracks(run_dir: Path) -> list[str]:
+    return _tracks_of(yaml.safe_load((run_dir / "config.yaml").read_text()))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build the HTML report over logged baseline runs (read-only)."
+        description="Build the HTML report over logged runs (read-only)."
     )
     parser.add_argument("--runs", type=Path, default=Path("runs/baseline"))
     parser.add_argument(

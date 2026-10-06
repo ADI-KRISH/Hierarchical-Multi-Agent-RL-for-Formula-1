@@ -34,6 +34,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 from f1rl.config import EXAMPLE_CAR, CarParams, DriverEnvParams, SimParams
 from f1rl.envs.driver_env import DriverEnv
 from f1rl.envs.track import Track
+from f1rl.models.lap import standing_start_lap_time_s
 
 
 @dataclass(frozen=True)
@@ -42,13 +43,23 @@ class RunParams:
 
     name: str
     seed: int
-    track: str
+    track: str | list[str]  # one track, or several: envs are dealt round-robin
     total_timesteps: int
     n_envs: int
     eval_every_steps: int
     eval_episodes: int
     eval_seed: int  # eval laps use seeds eval_seed, eval_seed + 1, ...
     torch_threads: int = 1  # small MLPs train fastest (and reproducibly) on 1 thread
+    # Continue from this saved model (its weights; the PPO settings come from
+    # this config) instead of starting from scratch.
+    init_from: str | None = None
+    # At every eval, one lap per track is saved to eval_laps.jsonl with telemetry
+    # every this many decisions -- the record of how the driving changed.
+    replay_every_decisions: int = 5
+
+    @property
+    def tracks(self) -> list[str]:
+        return [self.track] if isinstance(self.track, str) else list(self.track)
 
 
 @dataclass(frozen=True)
@@ -151,33 +162,54 @@ def run_policy_lap(
     return result
 
 
-def eval_score(results: list[dict[str, Any]]) -> tuple[float, float, float]:
+def eval_score(
+    results: list[dict[str, Any]], limit_lap_s: dict[str, float] | None = None
+) -> tuple[float, float, float]:
     """Sort key for "better model", higher is better: completion rate first, then
-    faster mean lap, then mean reward -- which is what separates models before any
-    of them finishes a lap (without it, early evals all tie)."""
-    done = [r["lap_time_s"] for r in results if r["completed"]]
+    faster laps, then mean reward -- which is what separates models before any
+    of them finishes a lap (without it, early evals all tie). With several
+    tracks, lap times are compared as a fraction of each track's limit lap
+    (`limit_lap_s`, keyed by each result's "track"), so long tracks don't
+    dominate."""
+    done = [r for r in results if r["completed"]]
     rate = len(done) / len(results)
-    mean_lap = -float(np.mean(done)) if done else -float("inf")
-    return rate, mean_lap, float(np.mean([r["total_reward"] for r in results]))
+    if not done:
+        pace = -float("inf")
+    elif limit_lap_s:
+        pace = -float(
+            np.mean([r["lap_time_s"] / limit_lap_s[r["track"]] for r in done])
+        )
+    else:
+        pace = -float(np.mean([r["lap_time_s"] for r in done]))
+    return rate, pace, float(np.mean([r["total_reward"] for r in results]))
 
 
 class LapLoggerCallback(BaseCallback):
-    """Logs every finished training episode and runs periodic evaluation."""
+    """Logs every finished training episode and runs periodic evaluation on
+    every track, saving one replay lap per track per evaluation."""
 
     def __init__(
         self,
         run_dir: Path,
-        eval_env: DriverEnv,
+        eval_envs: dict[str, DriverEnv],
+        env_tracks: list[str],
         eval_every_steps: int,
         eval_episodes: int,
         eval_seed: int,
+        replay_every_decisions: int,
     ) -> None:
         super().__init__()
         self.run_dir = run_dir
-        self.eval_env = eval_env
+        self.eval_envs = eval_envs
+        self.env_tracks = env_tracks  # track name of each training env
         self.eval_every_steps = eval_every_steps
         self.eval_episodes = eval_episodes
         self.eval_seed = eval_seed
+        self.replay_every = replay_every_decisions
+        self.limit_lap_s = {
+            name: standing_start_lap_time_s(env.car, env.track)
+            for name, env in eval_envs.items()
+        }
         self.best_score: tuple[float, float, float] | None = None
         self._next_eval = 0
         self._returns: np.ndarray = np.zeros(0)
@@ -193,6 +225,7 @@ class LapLoggerCallback(BaseCallback):
             [
                 "timesteps",
                 "env",
+                "track",
                 "completed",
                 "off_track",
                 "stalled",
@@ -205,14 +238,17 @@ class LapLoggerCallback(BaseCallback):
             csv.writer(f).writerow(
                 [
                     "timesteps",
+                    "track",
                     "completion_rate",
                     "mean_lap_s",
                     "best_lap_s",
                     "mean_reward",
                     "off_track",
                     "stalled",
+                    "limit_lap_s",
                 ]
             )
+        (self.run_dir / "eval_laps.jsonl").write_text("")
 
     def _on_step(self) -> bool:
         self._returns += self.locals["rewards"]
@@ -234,6 +270,7 @@ class LapLoggerCallback(BaseCallback):
                 [
                     self.num_timesteps,
                     i,
+                    self.env_tracks[i],
                     int(row["completed"]),
                     int(row["off_track"]),
                     int(row["stalled"]),
@@ -264,39 +301,55 @@ class LapLoggerCallback(BaseCallback):
 
     def _evaluate(self) -> None:
         assert isinstance(self.model, PPO)
-        results = [
-            run_policy_lap(self.model, self.eval_env, self.eval_seed + k)
-            for k in range(self.eval_episodes)
-        ]
-        laps = [r["lap_time_s"] for r in results if r["completed"]]
-        rate = len(laps) / len(results)
-        mean_lap = float(np.mean(laps)) if laps else None
-        mean_reward = float(np.mean([r["total_reward"] for r in results]))
-        with (self.run_dir / "eval.csv").open("a", newline="") as f:
-            csv.writer(f).writerow(
-                [
-                    self.num_timesteps,
-                    f"{rate:.3f}",
-                    _fmt(mean_lap),
-                    _fmt(min(laps) if laps else None),
-                    f"{mean_reward:.4f}",
-                    sum(r["off_track"] for r in results),
-                    sum(r["stalled"] for r in results),
-                ]
-            )
-        self.logger.record("eval/completion_rate", rate)
-        self.logger.record("eval/mean_reward", mean_reward)
-        if mean_lap is not None:
-            self.logger.record("eval/mean_lap_s", mean_lap)
-        score = eval_score(results)
+        all_results = []
+        summary = []
+        for name, env in self.eval_envs.items():
+            results = []
+            for k in range(self.eval_episodes):
+                every = self.replay_every if k == 0 else 0
+                lap = run_policy_lap(
+                    self.model, env, self.eval_seed + k, telemetry_every=every
+                )
+                lap["track"] = name
+                if k == 0:
+                    replay = {"timesteps": self.num_timesteps, **lap}
+                    with (self.run_dir / "eval_laps.jsonl").open("a") as f:
+                        f.write(json.dumps(replay) + "\n")
+                    lap.pop("telemetry", None)
+                results.append(lap)
+            all_results.extend(results)
+            laps = [r["lap_time_s"] for r in results if r["completed"]]
+            rate = len(laps) / len(results)
+            mean_lap = float(np.mean(laps)) if laps else None
+            mean_reward = float(np.mean([r["total_reward"] for r in results]))
+            with (self.run_dir / "eval.csv").open("a", newline="") as f:
+                csv.writer(f).writerow(
+                    [
+                        self.num_timesteps,
+                        name,
+                        f"{rate:.3f}",
+                        _fmt(mean_lap),
+                        _fmt(min(laps) if laps else None),
+                        f"{mean_reward:.4f}",
+                        sum(r["off_track"] for r in results),
+                        sum(r["stalled"] for r in results),
+                        f"{self.limit_lap_s[name]:.4f}",
+                    ]
+                )
+            self.logger.record(f"eval/{name}/completion_rate", rate)
+            if mean_lap is not None:
+                self.logger.record(f"eval/{name}/mean_lap_s", mean_lap)
+            lap_text = f"{mean_lap:.2f}s" if mean_lap is not None else "--"
+            summary.append(f"{name} {rate:.0%} {lap_text}")
+
+        score = eval_score(all_results, self.limit_lap_s)
         improved = self.best_score is None or score > self.best_score
         if improved:
             self.best_score = score
             self.model.save(self.run_dir / "model_best.zip")
-        lap_text = f"{mean_lap:.3f}s" if mean_lap is not None else "--"
         print(
-            f"[eval] {self.num_timesteps:>9,} steps  finished {rate:4.0%}  "
-            f"mean lap {lap_text:>8}  reward {mean_reward:+.3f}"
+            f"[eval] {self.num_timesteps:>9,} steps  "
+            + " | ".join(summary)
             + ("  *best" if improved else ""),
             flush=True,
         )
@@ -325,9 +378,13 @@ def git_sha() -> str:
 
 
 def train(
-    config: TrainConfig, track: Track, run_dir: Path, car: CarParams = EXAMPLE_CAR
+    config: TrainConfig,
+    tracks: dict[str, Track],
+    run_dir: Path,
+    car: CarParams = EXAMPLE_CAR,
 ) -> PPO:
-    """Train PPO per `config` on `track`, logging into `run_dir`."""
+    """Train PPO per `config` on `tracks` (name -> Track), logging into
+    `run_dir`. Training envs are dealt round-robin across the tracks."""
     run = config.run
     torch.set_num_threads(run.torch_threads)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -353,20 +410,25 @@ def train(
                 "gymnasium": gym.__version__,
                 "car": asdict(car),
                 "env_params": asdict(config.env_params()),
-                "track_length_m": track.total_length_m,
+                "track_length_m": {n: t.total_length_m for n, t in tracks.items()},
             },
             indent=2,
         )
     )
 
     env_params = config.env_params()
+    names = list(tracks)
+    env_tracks = [names[i % len(names)] for i in range(run.n_envs)]
     vec_env = DummyVecEnv(
         [
-            make_env_fn(car, track, config.sim_params(run.seed + i), env_params)
-            for i in range(run.n_envs)
+            make_env_fn(car, tracks[name], config.sim_params(run.seed + i), env_params)
+            for i, name in enumerate(env_tracks)
         ]
     )
-    eval_env = DriverEnv(car, track, config.sim_params(run.eval_seed), env_params)
+    eval_envs = {
+        name: DriverEnv(car, track, config.sim_params(run.eval_seed), env_params)
+        for name, track in tracks.items()
+    }
 
     policy_kwargs = dict(config.policy)
     if "activation_fn" in policy_kwargs:
@@ -382,27 +444,42 @@ def train(
         verbose=0,
         **config.ppo,
     )
+    if run.init_from:
+        model.set_parameters(run.init_from, device="cpu")
     model.set_logger(configure(str(run_dir), ["csv"]))
     callback = LapLoggerCallback(
-        run_dir, eval_env, run.eval_every_steps, run.eval_episodes, run.eval_seed
+        run_dir,
+        eval_envs,
+        env_tracks,
+        run.eval_every_steps,
+        run.eval_episodes,
+        run.eval_seed,
+        run.replay_every_decisions,
     )
     model.learn(total_timesteps=run.total_timesteps, callback=callback)
     model.save(run_dir / "model_final.zip")
-    record_best_lap(run_dir, config, track, car)
+    record_best_laps(run_dir, config, tracks, car)
     return model
 
 
-def record_best_lap(
-    run_dir: Path, config: TrainConfig, track: Track, car: CarParams = EXAMPLE_CAR
+def record_best_laps(
+    run_dir: Path,
+    config: TrainConfig,
+    tracks: dict[str, Track],
+    car: CarParams = EXAMPLE_CAR,
 ) -> dict[str, Any]:
-    """Drive one deterministic eval lap with ``model_best.zip`` and save it, with
-    10 Hz telemetry, as ``best_lap.json`` -- so reports can show the agent's line
-    from logs alone, without ever loading or running a model."""
+    """Drive one deterministic eval lap per track with ``model_best.zip`` and save
+    them, with 10 Hz telemetry, as ``best_lap.json`` -- so reports can show the
+    agent's line from logs alone, without ever loading or running a model."""
     model = PPO.load(run_dir / "model_best.zip", device="cpu")
     env_params = config.env_params()
-    env = DriverEnv(car, track, config.sim_params(config.run.eval_seed), env_params)
     every = max(1, round(0.1 / (config.sim_params(0).dt_s * env_params.action_repeat)))
-    lap = run_policy_lap(model, env, config.run.eval_seed, telemetry_every=every)
-    lap["track"] = config.run.track
-    (run_dir / "best_lap.json").write_text(json.dumps(lap))
-    return lap
+    laps = {}
+    for name, track in tracks.items():
+        env = DriverEnv(car, track, config.sim_params(config.run.eval_seed), env_params)
+        lap = run_policy_lap(model, env, config.run.eval_seed, telemetry_every=every)
+        lap["track"] = name
+        laps[name] = lap
+    record = {"laps": laps}
+    (run_dir / "best_lap.json").write_text(json.dumps(record))
+    return record

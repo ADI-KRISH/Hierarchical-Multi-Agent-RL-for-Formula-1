@@ -74,7 +74,7 @@ def test_short_training_run_writes_its_logs(tmp_path: Path) -> None:
     config = load_config(_write(tmp_path, raw))
     short_loop = Track(segments=(Segment(200.0, 0.0), Segment(100.0, 0.01)))
 
-    train(config, short_loop, tmp_path / "run")
+    train(config, {"short": short_loop}, tmp_path / "run")
 
     for name in (
         "config.yaml",
@@ -90,6 +90,7 @@ def test_short_training_run_writes_its_logs(tmp_path: Path) -> None:
     assert "git_sha" in (tmp_path / "run" / "meta.json").read_text()
 
     # The report reads all of it back without touching the model.
-    view = training_view(tmp_path / "run", short_loop.total_length_m)
+    view = training_view(tmp_path / "run", "short", short_loop.total_length_m)
     assert view["eval"]["timesteps"]
     assert view["best_lap"] is not None
+    assert view["replays"] and view["replays"][0]["pos_m"]  # one lap per checkpoint

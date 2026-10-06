@@ -21,7 +21,7 @@ from f1rl.envs.track import (
     width_at,
 )
 from f1rl.models.car import max_corner_speed_ms
-from f1rl.models.lap import max_safe_speed_ms
+from f1rl.models.lap import max_safe_speed_ms, standing_start_lap_time_s
 
 ObsType = NDArray[np.float32]
 ActType = NDArray[np.float32]
@@ -91,6 +91,12 @@ class DriverEnv(gym.Env[ObsType, ActType]):
             low=low, high=1.0, shape=(n_obs,), dtype=np.float32
         )
 
+        self._time_penalty_per_s = self.env_params.time_penalty_per_s
+        if self.env_params.time_penalty_per_limit_lap:
+            limit_s = standing_start_lap_time_s(car, track)
+            self._time_penalty_per_s += (
+                self.env_params.time_penalty_per_limit_lap / limit_s
+            )
         self._seeded = False
         self._speed_ms = 0.0
         self._distance_m = 0.0
@@ -178,7 +184,7 @@ class DriverEnv(gym.Env[ObsType, ActType]):
         stalled = self._stalled_s >= self.env_params.stall_timeout_s
 
         lap_length_m = self.track.total_length_m
-        reward = distance_step / lap_length_m - self.env_params.time_penalty_per_s * dt
+        reward = distance_step / lap_length_m - self._time_penalty_per_s * dt
         safe_ms = max_safe_speed_ms(self.car, self.track, self._distance_m)
         overspeed = max(0.0, self._speed_ms - safe_ms) / self.car.max_speed_ms
         reward -= self.env_params.overspeed_penalty_per_s * overspeed * dt

@@ -76,6 +76,26 @@ header { display: grid; gap: 8px; }
 .two { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 900px) { .two { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); } }
 .stack { display: grid; gap: 20px; }
+.multiples { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
+.mini { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 12px 6px; display: grid; gap: 4px; cursor: pointer; text-align: left; font: inherit; color: inherit; min-width: 0; }
+.mini:hover { border-color: var(--axis); }
+.mini:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+.mini .mini-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.mini .mini-name { font-family: var(--font-display); font-weight: 600; font-size: var(--step-1); text-transform: capitalize; }
+.mini .mini-val { font-size: var(--step--1); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.replay { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+@media (min-width: 900px) { .replay { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); } }
+.replay-side { display: grid; gap: 12px; align-content: start; }
+.replay-status { display: grid; gap: 2px; }
+.replay-status .big { font-family: var(--font-display); font-size: var(--step-2); font-weight: 600; font-variant-numeric: tabular-nums; }
+.replay-status .small { color: var(--ink-2); font-size: var(--step--1); font-variant-numeric: tabular-nums; }
+.controls { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { font: 600 var(--step--1)/1 var(--font-body); padding: 9px 14px; border-radius: 6px; border: 1px solid var(--ink); background: var(--ink); color: var(--surface); cursor: pointer; }
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--axis); }
+.btn:focus-visible, input[type=range]:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+input[type=range] { width: 100%; accent-color: var(--series-3); }
+.slider-label { font-size: var(--step--1); color: var(--ink-2); }
+.slider-ends { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: -6px; }
 .section-title { font-size: var(--step-2); }
 .chart { position: relative; width: 100%; min-width: 0; }
 .chart svg { display: block; width: 100%; overflow: visible; }
@@ -122,6 +142,14 @@ details pre { font-size: 12px; overflow-x: auto; background: var(--bg); padding:
     <p class="meta" id="meta"></p>
   </header>
 
+  <section class="stack" id="overview" hidden>
+    <div class="card-head">
+      <h2 class="section-title">Training across circuits</h2>
+      <p id="overview-meta">One RL driver, trained on every circuit at once. Each panel is its evaluation lap time on one circuit as training went on, against that circuit's baseline. Pick one to see it in detail.</p>
+    </div>
+    <div class="multiples" id="multiples"></div>
+  </section>
+
   <nav class="tabs" id="tabs" role="tablist" aria-label="Track"></nav>
 
   <section class="tiles" id="tiles" aria-label="Summary"></section>
@@ -130,6 +158,26 @@ details pre { font-size: 12px; overflow-x: auto; background: var(--bg); padding:
     <div class="card-head"><h2 class="section-title">RL driver training</h2><p class="meta" id="training-meta"></p></div>
     <nav class="tabs" id="run-tabs" aria-label="Training run"></nav>
     <section class="tiles" id="training-tiles" aria-label="Training summary"></section>
+    <section class="card" id="replay-card" hidden>
+      <div class="card-head">
+        <h2>Watch it learn</h2>
+        <p>The lap the driver drove on this circuit at each training checkpoint. Early on it goes off or stops; later laps get cleaner and faster. Drag the slider, play a lap, or play the whole of training.</p>
+      </div>
+      <div class="replay">
+        <div class="chart" id="replay-map"></div>
+        <div class="replay-side">
+          <div class="replay-status" id="replay-status" aria-live="polite"></div>
+          <div class="controls">
+            <button type="button" class="btn" id="replay-play">Play lap</button>
+            <button type="button" class="btn ghost" id="replay-learn">Play training</button>
+          </div>
+          <label class="slider-label" for="replay-slider">Checkpoint</label>
+          <input type="range" id="replay-slider" min="0" max="0" step="1" value="0">
+          <div class="slider-ends"><span id="replay-first"></span><span id="replay-last"></span></div>
+          <div class="map-legend" id="replay-legend"></div>
+        </div>
+      </div>
+    </section>
     <div class="two">
       <section class="card">
         <div class="card-head">
@@ -669,6 +717,187 @@ details pre { font-size: 12px; overflow-x: auto; background: var(--bg); padding:
     lineChart($("eval-laps"), { label: "Evaluation lap time during training", x: ev.timesteps, xFmt: kFmt, tipHead: (v) => kFmt(v) + " decisions", height: 220, refs, yPad: 0.05,
       series: [{ label: "mean eval lap", color: c3, values: ev.mean_lap_s, markers: true }],
       yFmt: (v, step) => v.toFixed(decimals(step)) + " s", valueFmt: (v) => v.toFixed(3) + " s" });
+    const evalSvg = $("eval-laps").querySelector("svg");
+    markCheckpoint = (steps) => {
+      if (!evalSvg || !ev.timesteps.length) return;
+      let mark = evalSvg.querySelector(".cp-mark");
+      if (!mark) { mark = el("line", { class: "cp-mark", stroke: "var(--ink)", "stroke-width": 1.5, "stroke-dasharray": "0" }, evalSvg); }
+      const vb = evalSvg.viewBox.baseVal, ml = 50, mr = 12;
+      const x0 = ev.timesteps[0] > 0 ? 0 : 0, xMax = ev.timesteps[ev.timesteps.length - 1];
+      const x = ml + ((steps - x0) / (xMax - x0 || 1)) * (vb.width - ml - mr);
+      mark.setAttribute("x1", x); mark.setAttribute("x2", x); mark.setAttribute("y1", 18); mark.setAttribute("y2", vb.height - 26);
+    };
+    replayCard(view, run);
+    if (run.replays && run.replays.length) markCheckpoint(run.replays[replayState.idx].timesteps);
+  }
+
+  // ---------- replay: watch the driver learn ----------
+  const kFmtG = (v) => (v >= 1e6 ? (v / 1e6).toFixed(v % 1e6 ? 1 : 0) + "M" : v >= 1000 ? Math.round(v / 1000) + "k" : String(v));
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const replayState = { key: null, idx: null, raf: 0, learnTimer: 0 };
+  function stopReplay() {
+    cancelAnimationFrame(replayState.raf); replayState.raf = 0;
+    clearInterval(replayState.learnTimer); replayState.learnTimer = 0;
+    $("replay-play").textContent = "Play lap"; $("replay-learn").textContent = "Play training";
+  }
+  function replayCard(view, run) {
+    const card = $("replay-card");
+    const reps = (run && run.replays) || [];
+    card.hidden = !reps.length;
+    if (!reps.length) return;
+    const key = view.name + "/" + run.name;
+    stopReplay();  // a re-render replaces the map the animation draws into
+    if (replayState.key !== key || replayState.idx >= reps.length) {
+      replayState.key = key; replayState.idx = reps.length - 1;
+    }
+    const slider = $("replay-slider");
+    slider.max = String(reps.length - 1);
+    slider.value = String(replayState.idx);
+    $("replay-first").textContent = kFmtG(reps[0].timesteps);
+    $("replay-last").textContent = kFmtG(reps[reps.length - 1].timesteps) + " decisions";
+
+    // Static map: track outline, S/F line, corner labels.
+    const box = $("replay-map");
+    box.replaceChildren();
+    const mp = view.map;
+    const W = Math.max(box.clientWidth, 280);
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    mp.x_m.forEach((v) => { x0 = Math.min(x0, v); x1 = Math.max(x1, v); });
+    mp.y_m.forEach((v) => { y0 = Math.min(y0, v); y1 = Math.max(y1, v); });
+    const pad = 28, scale = Math.min((W - 2 * pad) / (x1 - x0 || 1), 420 / (y1 - y0 || 1));
+    const H = (y1 - y0) * scale + 2 * pad, ox = (W - (x1 - x0) * scale) / 2;
+    const px = (x) => ox + (x - x0) * scale, py = (y) => pad + (y1 - y) * scale;
+    const svg = el("svg", { viewBox: "0 0 " + W + " " + H, height: H, role: "img", "aria-label": "Replay of the driver's lap on " + view.name }, box);
+    let d = "";
+    mp.x_m.forEach((_, i) => { d += (i ? "L" : "M") + px(mp.x_m[i]).toFixed(1) + " " + py(mp.y_m[i]).toFixed(1); });
+    el("path", { d, fill: "none", stroke: "var(--track)", "stroke-width": 12, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+    const sfX = px(mp.x_m[0]), sfY = py(mp.y_m[0]);
+    el("line", { x1: sfX, y1: sfY - 9, x2: sfX, y2: sfY + 9, stroke: "var(--accent)", "stroke-width": 3 }, svg);
+    const trail = el("g", {}, svg);
+    const crash = el("g", { visibility: "hidden" }, svg);
+    el("path", { d: "M-7 -7L7 7M7 -7L-7 7", stroke: "var(--accent)", "stroke-width": 3, "stroke-linecap": "round" }, crash);
+    const car = el("circle", { r: 6, fill: "var(--series-3)", stroke: "var(--surface)", "stroke-width": 2 }, svg);
+    const stops = ["--seq-0", "--seq-1", "--seq-2", "--seq-3", "--seq-4"].map((n) => hexRgb(css(n)));
+    const vmax = 349;
+    const at = (dist) => {
+      const L = mp.distance_m[mp.distance_m.length - 1];
+      const dd = Math.max(0, Math.min(L, dist));
+      let i = 0; while (i < mp.distance_m.length - 2 && mp.distance_m[i + 1] < dd) i++;
+      const f = (dd - mp.distance_m[i]) / ((mp.distance_m[i + 1] - mp.distance_m[i]) || 1);
+      return [px(mp.x_m[i] + f * (mp.x_m[i + 1] - mp.x_m[i])), py(mp.y_m[i] + f * (mp.y_m[i + 1] - mp.y_m[i]))];
+    };
+    const lg = $("replay-legend");
+    lg.replaceChildren();
+    h("span", null, "0 km/h", lg);
+    const ramp = h("span", "ramp", null, lg);
+    ramp.style.background = "linear-gradient(90deg, " + stops.map((c) => "rgb(" + c.join(",") + ")").join(",") + ")";
+    h("span", null, vmax + " km/h", lg);
+
+    function status(rep, shownTime) {
+      const st = $("replay-status");
+      st.replaceChildren();
+      const pct = Math.round((100 * rep.distance_m) / view.length_m);
+      let big, small;
+      if (rep.completed) { big = rep.lap_time_s.toFixed(2) + " s"; small = "Finished the lap"; }
+      else if (rep.off_track) { big = "Off track"; small = "after " + Math.round(rep.distance_m).toLocaleString("en-US") + " m (" + pct + "% of the lap)"; }
+      else if (rep.stalled) { big = "Stopped"; small = "after " + Math.round(rep.distance_m).toLocaleString("en-US") + " m (" + pct + "% of the lap)"; }
+      else { big = "Ran out of time"; small = Math.round(rep.distance_m).toLocaleString("en-US") + " m in 200 s"; }
+      h("div", "small", "After " + rep.timesteps.toLocaleString("en-US") + " decisions of training", st);
+      h("div", "big", big, st);
+      h("div", "small", small + (shownTime !== undefined ? " · t = " + shownTime.toFixed(1) + " s" : ""), st);
+      const s = view.summary;
+      if (rep.completed && s.mean_s) {
+        const diff = rep.lap_time_s - s.mean_s;
+        h("div", "small", (diff <= 0 ? "−" : "+") + Math.abs(diff).toFixed(2) + " s vs baseline mean (" + s.mean_s.toFixed(2) + " s)", st);
+      }
+    }
+    function drawTrail(rep, upto) {
+      trail.replaceChildren();
+      const n = Math.min(upto, rep.pos_m.length);
+      for (let i = 1; i < n; i++) {
+        const [ax, ay] = at(rep.pos_m[i - 1]), [bx, by] = at(rep.pos_m[i]);
+        el("line", { x1: ax, y1: ay, x2: bx, y2: by, stroke: lerpColor(stops, rep.speed_kmh[i] / vmax), "stroke-width": 5, "stroke-linecap": "round" }, trail);
+      }
+      const last = n ? rep.pos_m[n - 1] : 0;
+      const [cx, cy] = at(last);
+      car.setAttribute("cx", cx); car.setAttribute("cy", cy);
+      const ended = n >= rep.pos_m.length;
+      if (ended && !rep.completed) {
+        const [ex, ey] = at(rep.distance_m);
+        crash.setAttribute("transform", "translate(" + ex + " " + ey + ")"); crash.setAttribute("visibility", "visible");
+      } else crash.setAttribute("visibility", "hidden");
+    }
+    function showFull(i) {
+      replayState.idx = i; slider.value = String(i);
+      const rep = reps[i];
+      drawTrail(rep, rep.pos_m.length);
+      status(rep);
+    }
+    function playLap() {
+      if (replayState.raf) { stopReplay(); showFull(replayState.idx); return; }
+      stopReplay();
+      const rep = reps[replayState.idx];
+      if (reduceMotion || !rep.time_s.length) { showFull(replayState.idx); return; }
+      $("replay-play").textContent = "Stop";
+      const speedup = 8, t0 = performance.now();
+      const tick = (now) => {
+        const t = ((now - t0) / 1000) * speedup;
+        let n = 0; while (n < rep.time_s.length && rep.time_s[n] <= t) n++;
+        drawTrail(rep, n);
+        status(rep, Math.min(t, rep.time_s[rep.time_s.length - 1]));
+        if (n >= rep.time_s.length) { replayState.raf = 0; $("replay-play").textContent = "Play lap"; showFull(replayState.idx); return; }
+        replayState.raf = requestAnimationFrame(tick);
+      };
+      replayState.raf = requestAnimationFrame(tick);
+    }
+    function playLearning() {
+      if (replayState.learnTimer) { stopReplay(); return; }
+      stopReplay();
+      $("replay-learn").textContent = "Stop";
+      let i = 0;
+      showFull(i);
+      replayState.learnTimer = setInterval(() => {
+        i += 1;
+        if (i >= reps.length) { stopReplay(); return; }
+        showFull(i);
+        markCheckpoint(reps[i].timesteps);
+      }, reduceMotion ? 1200 : 450);
+    }
+    slider.oninput = () => { stopReplay(); showFull(Number(slider.value)); markCheckpoint(reps[Number(slider.value)].timesteps); };
+    $("replay-play").onclick = playLap;
+    $("replay-learn").onclick = playLearning;
+    showFull(replayState.idx);
+  }
+  // Marks the replayed checkpoint on the evaluation lap-time chart.
+  let markCheckpoint = () => {};
+
+  function overview() {
+    const sec = $("overview");
+    const multi = DATA.filter((v) => (v.training || []).some((r) => (r.tracks || []).length > 1));
+    sec.hidden = !multi.length;
+    if (!multi.length) return;
+    const grid = $("multiples");
+    grid.replaceChildren();
+    const c1 = css("--series-1"), c3 = css("--series-3");
+    multi.forEach((view) => {
+      const run = view.training.find((r) => (r.tracks || []).length > 1);
+      const idx = DATA.indexOf(view);
+      const card = h("button", "mini", null, grid);
+      card.type = "button";
+      card.setAttribute("aria-label", "Open " + view.name);
+      const head = h("div", "mini-head", null, card);
+      h("span", "mini-name", view.name, head);
+      const laps = run.eval.mean_lap_s.filter((v) => v !== null);
+      const last = laps.length ? laps[laps.length - 1] : null;
+      const s = view.summary;
+      h("span", "mini-val", last === null ? "no finished lap yet" : last.toFixed(1) + " s · baseline " + (s.mean_s ? s.mean_s.toFixed(1) : "–") + " s", head);
+      const chart = h("div", "chart", null, card);
+      card.addEventListener("click", () => { current = idx; currentRun = run.name; try { localStorage.setItem("baseline-report-track", String(idx)); } catch (e) { /* ignore */ } render(); document.getElementById("tabs").scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth" }); });
+      requestAnimationFrame(() => lineChart(chart, { label: "Evaluation lap time on " + view.name, x: run.eval.timesteps, xFmt: kFmtG, tipHead: (v) => kFmtG(v) + " decisions", height: 130, yPad: 0.05,
+        refs: s.mean_s ? [{ value: s.mean_s, label: "baseline", color: c1 }] : [],
+        series: [{ label: "RL agent", color: c3, values: run.eval.mean_lap_s }],
+        yFmt: (v, step) => v.toFixed(decimals(step)), valueFmt: (v) => v.toFixed(2) + " s" }));
+    });
   }
 
   function render() {
@@ -676,6 +905,7 @@ details pre { font-size: 12px; overflow-x: auto; background: var(--bg); padding:
     document.querySelectorAll(".tab").forEach((b, i) => b.setAttribute("aria-selected", String(i === current)));
     const cfg = view.config;
     $("meta").textContent = view.name + " · " + (view.length_m / 1000).toFixed(3) + " km · " + cfg.episodes + " episodes · seed " + cfg.seed + " · corner grip " + Math.round(cfg.baseline.corner_grip_margin * 100) + "%, braking " + Math.round(cfg.baseline.braking_margin * 100) + "% · git " + String(view.git_sha).slice(0, 8);
+    overview();
     tiles(view);
     trackMap($("map"), view);
     sectorBars($("sectors"), view);

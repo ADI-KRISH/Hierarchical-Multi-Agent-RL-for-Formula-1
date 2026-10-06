@@ -267,3 +267,15 @@ def test_braking_margin_observation_turns_negative_past_a_braking_point() -> Non
     env._distance_m, env._speed_ms = 990.0, EXAMPLE_CAR.max_speed_ms  # hairpin ahead
     assert env._observation()[3] == -1.0
     assert env.observation_space.contains(env._observation())
+
+
+def test_time_penalty_per_limit_lap_charges_the_same_per_limit_lap() -> None:
+    """A lap driven exactly at limit pace costs `time_penalty_per_limit_lap`,
+    whatever the track's length."""
+    from f1rl.models.lap import standing_start_lap_time_s
+
+    params = DriverEnvParams(time_penalty_per_s=0.0, time_penalty_per_limit_lap=1.2)
+    for track in (example_track(), technical_track()):
+        env = DriverEnv(EXAMPLE_CAR, track, SimParams(seed=0), params)
+        limit_s = standing_start_lap_time_s(EXAMPLE_CAR, track)
+        assert env._time_penalty_per_s * limit_s == pytest.approx(1.2)

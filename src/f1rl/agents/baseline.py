@@ -181,17 +181,20 @@ def run_episode(
 
 
 def resolve_track(spec: str) -> Track:
-    """A synthetic track by name, or a real circuit as ``<year>:<grand prix>``
-    (FastF1 data; needs network access the first time, then reads the cache).
+    """A track by name: synthetic (`SYNTHETIC_TRACKS`), a real circuit from GPS
+    centerlines (`REAL_CIRCUITS`), or a FastF1 session as ``<year>:<grand prix>``.
+    Real circuits need network access the first time, then read the cache.
     """
+    from f1rl.envs.circuits import REAL_CIRCUITS, load_circuit, load_real_circuit
+
     if spec in SYNTHETIC_TRACKS:
         return SYNTHETIC_TRACKS[spec]()
+    if spec in REAL_CIRCUITS:
+        return load_real_circuit(spec)
     year, sep, grand_prix = spec.partition(":")
     if not sep or not year.isdigit():
-        names = ", ".join(SYNTHETIC_TRACKS)
+        names = ", ".join([*SYNTHETIC_TRACKS, *REAL_CIRCUITS])
         raise ValueError(f"track must be one of {names}, or <year>:<grand prix>")
-    from f1rl.envs.circuits import load_circuit
-
     return load_circuit(int(year), grand_prix)
 
 
@@ -266,7 +269,7 @@ def evaluate_baseline(
         off_track=sum(r.off_track for _d, r in runs),
     )
     limit_lap_s = limit_time[-1]
-    map_xy = track_xy(track, analytics.map_step_m)
+    map_xy = track_xy(track, analytics.map_step_m, close_loop=True)
     map_ds = track.total_length_m / (len(map_xy) - 1) if len(map_xy) > 1 else 0.0
 
     return {

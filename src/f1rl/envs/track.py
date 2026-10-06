@@ -83,12 +83,15 @@ def max_abs_curvature_between(track: Track, start_m: float, end_m: float) -> flo
     return tightest
 
 
-def track_xy(track: Track, step_m: float = 2.0) -> list[tuple[float, float]]:
+def track_xy(
+    track: Track, step_m: float = 2.0, close_loop: bool = False
+) -> list[tuple[float, float]]:
     """Centerline (x, y) points at most `step_m` apart, rebuilt from curvature.
 
     Starts at the origin heading along +x, and walks each segment exactly (a
     constant-curvature arc), so a well-formed closed lap ends back at the origin.
-    Only the map plot needs this; the physics works in distance-along-track.
+    `close_loop` shears out any small closing gap (see below). Only maps need
+    this; the physics works in distance-along-track.
     """
     x = y = heading = 0.0
     points = [(x, y)]
@@ -105,6 +108,16 @@ def track_xy(track: Track, step_m: float = 2.0) -> list[tuple[float, float]]:
             y += chord * math.sin(heading + turn / 2)
             heading += turn
             points.append((x, y))
+    if close_loop:
+        # Spread the closing gap evenly round the lap, for drawing: curvature
+        # rebuilt from real (GPS) data integrates to a lap that ends a few
+        # metres from where it started. The physics never uses these points.
+        gap_x, gap_y = points[-1]
+        n = len(points) - 1
+        points = [
+            (px - gap_x * i / n, py - gap_y * i / n)
+            for i, (px, py) in enumerate(points)
+        ]
     return points
 
 

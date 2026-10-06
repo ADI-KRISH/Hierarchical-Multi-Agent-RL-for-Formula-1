@@ -42,12 +42,13 @@ def main() -> None:
             raise SystemExit(f"{run_dir} exists -- pass --overwrite or rename the run.")
         shutil.rmtree(run_dir)
 
-    track = resolve_track(config.run.track)
+    tracks = {name: resolve_track(name) for name in config.run.tracks}
+    where = ", ".join(f"{n} ({t.total_length_m:.0f} m)" for n, t in tracks.items())
     print(
-        f"Training {config.run.name}: {config.run.total_timesteps:,} steps on "
-        f"{config.run.track} ({track.total_length_m:.0f} m), seed {config.run.seed}"
+        f"Training {config.run.name}: {config.run.total_timesteps:,} decisions on "
+        f"{where}, seed {config.run.seed}"
     )
-    train(config, track, run_dir)
+    train(config, tracks, run_dir)
     print(f"Done. Logs and models in {run_dir}/")
 
 

@@ -22,6 +22,17 @@ from typing import Final
 #: Sporting Code, Appendix O), so a real track is at least this wide.
 DEFAULT_TRACK_WIDTH_M: Final = 12.0
 
+#: Mean Earth radius (m), IUGG value -- for projecting GPS circuit centerlines
+#: to local metres.
+EARTH_MEAN_RADIUS_M: Final = 6_371_008.8
+
+#: Window (m) of the moving average applied along the track to the curvature of
+#: a circuit's GPS centerline. The dataset's points are hand-digitised ~25-50 m
+#: apart, so curvature from an exact interpolating spline carries wiggles at
+#: that scale; averaging over ~one point spacing removes them while leaving a
+#: true constant-radius corner unchanged. A processing choice, not an F1 figure.
+CIRCUIT_CURVATURE_WINDOW_M: Final = 25.0
+
 # Standard acceleration of gravity, BIPM SI Brochure (9th ed.), exact by definition.
 GRAVITY_M_S2: Final = 9.80665
 
@@ -107,6 +118,12 @@ class DriverEnvParams:
     # Reward subtracted per simulated second. Progress pays 1.0 per lap whatever the
     # pace, so this is what makes a faster lap score higher.
     time_penalty_per_s: float = 0.01
+    # A second time penalty, normalised per track: a lap at that track's limit
+    # pace costs exactly this much (per-second rate = this / limit lap time).
+    # Unlike a fixed per-second rate, it means the same thing on a 60 s and a
+    # 95 s circuit, and while it is below 1 + off_track_penalty, going off early
+    # can never score better than finishing.
+    time_penalty_per_limit_lap: float = 0.0
     # Reward subtracted per second the car is past a braking point (faster than
     # `max_safe_speed_ms`), scaled by the overspeed as a fraction of top speed.
     # Graded, so braking a little earlier always scores a little better -- the

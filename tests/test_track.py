@@ -80,3 +80,13 @@ def test_synthetic_tracks_close_into_a_loop(make_track: Callable[[], Track]) -> 
     assert math.hypot(x, y) < 1e-6
     heading_turned = sum(s.length_m * s.curvature_per_m for s in track.segments)
     assert heading_turned == pytest.approx(2 * math.pi)
+
+
+def test_track_xy_close_loop_shears_out_a_closing_gap() -> None:
+    # Three quarters of a circle plus a straight: not a closed lap.
+    track = Track(segments=(Segment(150.0, 0.01), Segment(100.0, 0.0)))
+    open_end = track_xy(track)[-1]
+    assert math.hypot(*open_end) > 1.0
+    closed = track_xy(track, close_loop=True)
+    assert math.hypot(*closed[-1]) < 1e-9
+    assert closed[0] == (0.0, 0.0)

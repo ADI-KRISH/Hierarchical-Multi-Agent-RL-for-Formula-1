@@ -136,7 +136,7 @@ details pre { font-size: 12px; overflow-x: auto; background: var(--bg); padding:
 
 <div class="page">
   <header>
-    <div class="eyebrow">FormulaOneRL · Phases 3–4</div>
+    <div class="eyebrow">FormulaOneRL · Phase 4 · real circuits</div>
     <h1>Driver Lap Report</h1>
     <p class="lede">A cautious rule-based driver and a PPO-trained RL driver lap each track from a standing start. Both are timed against the theoretical limit lap for the same car: a perfect driver using 100% of grip and brakes. The baseline is the time the RL driver has to beat.</p>
     <p class="meta" id="meta"></p>
@@ -668,7 +668,9 @@ details pre { font-size: 12px; overflow-x: auto; background: var(--bg); padding:
   function trainingRun(view) {
     const runs = view.training || [];
     if (!runs.length) return null;
-    return runs.find((r) => r.name === currentRun) || runs.find((r) => r.name === "driver_ppo") || runs[runs.length - 1];
+    const bestLap = (r) => Math.min(...r.eval.mean_lap_s.filter((v) => v !== null), Infinity);
+    const fastest = runs.slice().sort((a, b) => bestLap(a) - bestLap(b))[0];
+    return runs.find((r) => r.name === currentRun) || fastest;
   }
 
   function renderTraining(view, run) {

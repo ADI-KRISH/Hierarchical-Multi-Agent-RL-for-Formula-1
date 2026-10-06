@@ -3,9 +3,10 @@
 Snapshot as of 2026-10-06. Phase definitions and "done when" criteria live in
 `docs/roadmap.md`; this file only tracks where we are against them.
 
-**Summary:** phases 0-4 are done. A PPO driver completes clean laps of the
-technical track (44.18 s, 100% of eval laps) but is not yet faster than the
-rule-based baseline (43.19 s mean). Phases 5-7 are not started.
+**Summary:** phases 0-4 are done, plus six real circuits. The best PPO driver laps
+the technical track in 43.90 s, 0.7 s behind the rule-based baseline (43.19 s mean);
+why it is slower is diagnosed below. One driver trained on all six real circuits
+completes every lap, 0.8-3.9% behind the baseline. Phases 5-7 are not started.
 
 ## Done
 
@@ -85,6 +86,61 @@ What it took (each a config value; earlier runs kept under `runs/` locally):
 | 4 | Stalling (< 2 m/s for 3 s) ends the episode like an off | No parking, but braking still imprecise |
 | 5 | Braking margin (safe speed - speed) as its own observation, scaled to +-1 | Clean laps from 150k decisions on |
 
+### Real circuits (beyond the roadmap)
+- `envs/circuits.py` loads Zandvoort, Spa, Suzuka, Monaco, Sepang and Interlagos from
+  GPS centerlines in the open bacinger/f1-circuits dataset (MIT, pinned commit),
+  rescaled to official lengths. Works offline after one download, and covers Sepang,
+  which FastF1 can't (no telemetry before 2018). FastF1's host is blocked in the cloud
+  sandbox, so this is the source used here.
+- Limit laps run 61-92 s, roughly 10-15% quicker than real pole laps. That fits the
+  model: 5 g of grip at every speed and no aerodynamic drag.
+- `configs/driver_ppo_circuits.yaml`: one driver trained on all six at once (envs dealt
+  round-robin), 6M decisions. Each eval lap is logged with telemetry, so the report
+  can replay how the driving changed during training ("Watch it learn").
+
+Baseline vs RL agent on the circuits (baseline: mean of 20 laps; agent: best eval lap):
+
+| Circuit | Length | Limit lap | Baseline mean | RL agent (best model) | Agent vs baseline | Best eval lap during training |
+|---|---|---|---|---|---|---|
+| Zandvoort | 4.259 km | 65.79 s | 68.32 s | 69.60 s | +1.9% | 69.57 s |
+| Spa | 7.004 km | 95.22 s | 98.06 s | 101.91 s | +3.9% | 101.91 s |
+| Suzuka | 5.807 km | 84.37 s | 87.24 s | 89.55 s | +2.6% | 89.55 s |
+| Monaco | 3.337 km | 63.24 s | 65.62 s | 66.16 s | +0.8% | 66.16 s |
+| Sepang | 5.543 km | 81.89 s | 84.66 s | 86.63 s | +2.3% | 86.63 s |
+| Interlagos | 4.309 km | 64.45 s | 66.83 s | 69.01 s | +3.3% | 69.01 s |
+
+### Why is the RL driver slower than the baseline? (technical track)
+
+Where the time goes: the agent is **faster than the baseline in every corner** (by
+0.02-0.06 s each) and **loses all of it on the straights** (0.1-0.5 s per straight).
+It lifts off long before its braking point and cruises: 6-9 s per lap of coasting while
+it could still accelerate, against none for the baseline, and a median margin of 40-62
+km/h below the safe speed against the baseline's 15. Its actual braking is excellent:
+once braking, it tracks the safe-speed curve within 6-8 km/h.
+
+What was tested (technical track, seed 0, 2M decisions unless noted):
+
+| Hypothesis | Experiment | Best eval lap | Verdict |
+|---|---|---|---|
+| (original) | `driver_ppo` | 44.18 s | - |
+| Undertrained | +450k more decisions from the 2M model | 44.18 s, flat | No |
+| Speed pays too little | time penalty 0.01 -> 0.03 /s | 44.09 s | Learns ~2x faster, coasts less (9.4 -> 6.0 s), same plateau |
+| Exploration noise makes it cautious | fine-tune with action std 0.2 -> 0.05 | 44.10 s, flat | No |
+| Speed gain drowned by penalties | + reward for v / v_safe | 45.32 s at 1M (same curve as without) | No |
+| Control rate (10 Hz) caps it | baseline driver at 10 Hz | 41.95 s possible | No: the env allows near-limit laps at 10 Hz |
+| Braking point seen too late | + 300 m braking-point countdown observation | 44.80 s at 600k, then drifted | Learns fastest; PPO then degrades |
+| PPO instability | countdown + larger rollouts, LR decay, KL limit | **43.90 s** | Best; smooth, no drift |
+
+Conclusion: the environment allows ~42 s laps at the agent's own 10 Hz control rate,
+and the agent has the information it needs. The limit is the optimiser. PPO settles
+into a speed governor on straights (less throttle the faster it goes) because a few
+metres of later lifting is worth ~0.003 reward per straight, while any overspeed or
+crash costs ~1.0, so the safe local optimum is never left. Tuning cut the gap to the
+baseline mean from 1.0 s to 0.7 s; it did not remove it. Next levers: an off-policy
+algorithm (SAC, also in SB3, and listed for the driver in `docs/context.md`), or a
+curriculum that starts episodes near braking points so late-braking is practised far
+more often than once per lap.
+
 ## Left
 
 | Phase | What | State |
@@ -93,6 +149,9 @@ What it took (each a config value; earlier runs kept under `runs/` locally):
 | 6 | Read-only Dash dashboard over `runs/` | Not started — stub |
 | 7 | README polish: results, GIF, future-work section | Not started |
 | 8 | Future work: opponents, tire/fuel/ERS, Strategy Agent, two-agent coupling | Out of MVP scope; needs explicit go-ahead |
+
+**Also next:** retrain the circuits driver with the settings that worked best on the
+technical track (`configs/driver_ppo_stable.yaml`); the circuits run predates them.
 
 **Next up:** phase 5, `eval.py` head-to-head against the baseline. Likely levers to
 close the 1 s gap: longer training (the curve hadn't flattened), and checking

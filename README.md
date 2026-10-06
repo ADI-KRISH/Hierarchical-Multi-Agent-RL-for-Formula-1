@@ -7,8 +7,9 @@ A reinforcement learning driver agent that learns to lap a custom Formula 1
 track simulator faster than a rule-based baseline. Stable Baselines3 (PPO) on a
 custom Gymnasium environment.
 
-**Status:** phase 4 -- a PPO driver laps the technical track cleanly (44.18 s)
-against a rule-based baseline (43.19 s mean); head-to-head evaluation is next. See `PROGRESS.md` for what is done and what is left,
+**Status:** phase 4 -- PPO drivers lap a synthetic track and six real circuits
+(Zandvoort, Spa, Suzuka, Monaco, Sepang, Interlagos) cleanly, 1-4% behind a
+rule-based baseline; `PROGRESS.md` explains why they are slower. See `PROGRESS.md` for what is done and what is left,
 `docs/roadmap.md` for the build plan, and `docs/context.md` for the long-term
 vision.
 
@@ -73,7 +74,10 @@ uv run python -m f1rl.report          # -> runs/baseline/report.html
 
 # Phase 4: train the PPO driver (~13 min on 4 CPU cores), then re-run the report
 uv run python -m f1rl.train --config configs/driver_ppo.yaml
+# One driver on six real circuits (~50 min); circuits download once to data/
+uv run python -m f1rl.train --config configs/driver_ppo_circuits.yaml
 ```
 
-Tracks: `oval`, `technical` (synthetic), or a real circuit as
-`<year>:<grand prix>`, e.g. `2023:Monaco` (downloads FastF1 data on first use).
+Tracks: `oval`, `technical` (synthetic); `zandvoort`, `spa`, `suzuka`, `monaco`,
+`sepang`, `interlagos` (real, from GPS centerlines of the open f1-circuits
+dataset); or a FastF1 session as `<year>:<grand prix>`, e.g. `2023:Monaco`.

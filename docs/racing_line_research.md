@@ -347,3 +347,58 @@ optimal-line limit, and visibly takes outside-apex-outside lines in the replays.
 - CLAUDE.md allows "point-mass / bicycle model"; Frenet point-mass with heading is
   within that. A full double-track tyre model (as in TUM's minimum-time solver) is not
   needed for the MVP.
+
+---
+
+## 5. After the racing line: driving styles, then racing other cars
+
+Agreed staging (2026-10-07). Order matters: each stage needs the one before it.
+
+**Why not train it all at once.** A driving style shows up mostly in the line and
+in how much grip the car uses: an "attacking" driver brakes later, uses more grip and
+clips apexes harder; a "smooth" one brakes earlier, steers gently and spares the
+tyres. With the car locked to the centreline only throttle and brake could differ.
+And training line, style and racing together would make failures impossible to
+attribute (we already saw how easily PPO gets stuck).
+
+**Stage A: racing line, one car (section 4).** But design env v2 with the hooks for
+stage B from day one, so nothing is redone later:
+- a **style input** in the observation (a number from 0 = smooth to 1 = attacking),
+  fixed at 0.5 and ignored until stage B;
+- reward terms that the style can weight: steering and pedal smoothness (rate of
+  change of the commands), grip used as a fraction of the limit, and later a
+  tyre-wear proxy.
+
+**Stage B: a style-conditioned driver.** Start from the stage-A driver, then
+fine-tune with the style input sampled per episode and the reward weights following
+it. Smooth end: penalise jerky commands, keep a grip reserve. Attacking end: reward
+using the full grip and late braking, accept more risk. One trained policy then
+drives any style, chosen at race time.
+- *Measure it*: style metrics from telemetry: braking-point distance before each
+  corner, mean grip used, steering-rate statistics. The report shows them per style
+  setting ("attacking brakes 15 m later than smooth").
+- *Optionally calibrate against real drivers*: FastF1 telemetry (works locally;
+  blocked in the cloud sandbox) gives real braking points and throttle traces.
+
+**Stage C: other cars: overtaking and defending.** The biggest change, and only
+worth doing once one car is fast and clean:
+- opponents in the env (positions along the track, collisions, optionally a simple
+  slipstream effect), scripted first (the baseline driver is a ready-made opponent),
+  then self-play against copies of the agent;
+- observations of nearby cars (gap and lateral position ahead and behind);
+- rewards for gaining or holding position, penalties for contact.
+This is roadmap Phase 8 ("Opponent cars + overtaking rewards") and needs an explicit
+go-ahead per CLAUDE.md's scope rule.
+
+**How it connects to the full vision.** The style input is the communication
+channel `docs/context.md` describes: the future Strategy Agent sets "attack" or
+"conserve tyres", and the Driver Agent carries it out. So stage B is the first
+concrete piece of the two-agent hierarchy, not a detour.
+
+| When | What | Size |
+|---|---|---|
+| Now | Racing line, many tracks, one car (section 4) | Big |
+| Built into that work | Style input and reward hooks, unused at first | Small |
+| Next | Train the style dial; measure styles from telemetry | Medium |
+| Later | Opponents, overtaking, defending, self-play (Phase 8) | Big |
+| Then | Strategy Agent sets the style dial | The full vision |

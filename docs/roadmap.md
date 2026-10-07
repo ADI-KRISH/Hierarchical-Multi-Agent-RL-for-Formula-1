@@ -98,6 +98,54 @@ clearly trends up over training.
 
 ---
 
+## Phase 4R — Racing line on many tracks (added 2026-10-07)
+
+Why: the Phase 4 driver is locked to the track centreline, so it cannot learn a
+racing line. On TUM's 25 real tracks the racing line is 9.2% faster than the
+centreline in our own physics (`scripts/raceline_gain.py`). Full research, the
+seven reference repos reviewed and the reasoning: `docs/racing_line_research.md`.
+Work these steps in order, like phases.
+
+### 4R.1 — More tracks with real widths
+- Load TUMFTM/racetrack-database (25 tracks: centreline + left/right widths),
+  downloaded and cached under `data/` (LGPL data, not vendored).
+- Per-segment widths from the data. Hold out ~5 tracks for evaluation only.
+
+**Done when:** all 25 load, lengths match the data, and a baseline lap runs on each.
+
+### 4R.2 — Optimal racing line for every track
+- Pure function: minimum-curvature line (lateral shift per station, bounded by the
+  width) and its limit lap. Check against TUM's published racing lines.
+
+**Done when:** our optimal lap times match the limit lap on TUM's lines within ~1%,
+and the report shows the optimal line and its lap time per track.
+
+### 4R.3 — Let the car steer (env v2)
+- Frenet-frame kinematics: heading relative to the track and a steered path
+  curvature, so the lateral offset changes the corner the car drives.
+- One friction circle shared by steering and throttle/brake. Off track past the
+  local half-width. Physics as pure functions with tests; keep v1 for comparison.
+- Design in the hooks for driving styles (a style input, style-weighted reward
+  terms), unused for now — see Phase 8.
+
+**Done when:** a scripted driver following the 4R.2 optimal line laps within ~1%
+of the optimal limit lap in env v2, and the env checker passes.
+
+### 4R.4 — RL design from AM-RL
+- Action mapping: actions scaled into what the tyres can deliver (cannot exceed grip).
+- Observation: centreline and edge points ahead in the car's frame, speed, heading
+  error, offset, yaw rate; no lap-progress feature.
+- Random starts anywhere on the lap; reward = speed along the track or gate times.
+
+### 4R.5 — Train across tracks with SAC/TD3
+- SB3 SAC or TD3, envs dealt across the training tracks (+ generated tracks).
+- Per-track evals and replay laps, as in Phase 4.
+
+**Done when:** the driver completes every held-out track and is within a few
+percent of the optimal-line limit there; replays show outside-apex-outside lines.
+
+---
+
 ## Phase 5 — Beat the baseline
 
 Goal: prove the agent is actually good.
@@ -149,11 +197,15 @@ trained car lap the track.
 Only after everything above runs and is committed. Each is a real project on its
 own; do not start these to "finish faster."
 
-- Opponent cars + overtaking rewards.
+- Driving styles: a style input (smooth to attacking) the driver is trained to
+  follow, measured from telemetry (braking points, grip used, steering rate).
+  Staging: `docs/racing_line_research.md` section 5.
+- Opponent cars + overtaking and defending rewards (scripted opponents, then self-play).
 - Tire degradation, fuel, ERS models feeding the observation.
 - A **Strategy Agent** (discrete, once per lap) — the second half of the vision.
   Full design: `docs/strategy_agent_design.md`. Earliest realistic entry point is
   after Phase 5 (Driver Agent beats the baseline) or Phase 6 (dashboard) — do not
   start this without the user explicitly confirming first.
-- Coupling the two agents (strategy mode fed into the driver's observation).
+- Coupling the two agents (strategy mode fed into the driver's observation; the
+  driving-style input is that channel).
 - Stretch: self-play, FastF1 calibration, LLM race engineer, digital-twin track.

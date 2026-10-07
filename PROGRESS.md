@@ -163,9 +163,9 @@ action mapping, random starts and SAC/TD3 trained across tracks with held-out te
 **Also next:** retrain the circuits driver with the settings that worked best on the
 technical track (`configs/driver_ppo_stable.yaml`); the circuits run predates them.
 
-**Next up:** phase 5, `eval.py` head-to-head against the baseline. Likely levers to
-close the 1 s gap: longer training (the curve hadn't flattened), and checking
-whether the overspeed penalty makes it lift too early.
+**Next up:** Phase 4R in `docs/roadmap.md` (racing line on many tracks), starting
+with 4R.1 (TUM's 25 tracks with real widths) and 4R.2 (optimal line per track). Then
+Phase 5 measures the new driver against the baseline.
 
 ## Known gaps
 

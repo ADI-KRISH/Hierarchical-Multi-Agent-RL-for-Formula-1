@@ -5,6 +5,18 @@ Research notes, 2026-10-06. Goal: a driver that finds **the best racing line** a
 driver is slower today, walks through seven open-source projects one at a time, and
 turns what they do differently into a plan.
 
+**In plain terms.** Our car is stuck on a rail down the middle of the track: it can
+learn when to brake and accelerate, but it can't steer, so it can't take the racing
+line (go wide, clip the apex, go wide), which is about 9% faster. The plan:
+(1) add 25 real tracks with their real widths; (2) calculate the perfect line for each
+as an answer key; (3) let the car steer; (4) train it the way the best project
+(AM-RL) did: it can't ask the tyres for more grip than exists, it practises from
+random spots on the track, and it sees the road ahead the way a driver does;
+(5) train on many tracks at once; (6) test it on tracks it has never seen, against the
+baseline and the answer key. Driving styles (smooth vs attacking) and racing other
+cars come after that (section 5). The step-by-step version is Phase 4R in
+`docs/roadmap.md`.
+
 Repos reviewed (shallow clones, latest commit at time of review):
 
 | Repo | Commit | Licence | Kind |

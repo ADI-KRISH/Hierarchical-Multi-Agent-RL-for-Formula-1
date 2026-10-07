@@ -1,0 +1,961 @@
+<title>Driver Lap Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
+<style>
+/* Layout: a race-engineer's debrief sheet. Summary strip, then map + sector losses
+   side by side, then distance-based traces stacked on one shared x-axis, then laps. */
+:root {
+  --bg: #f4f5f3;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #7a7873;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --band: rgba(42, 120, 214, 0.06);
+  --track: #dcdbd4;
+  --accent: #d0021b;          /* kerb red: used only for the S/F line and eyebrow */
+  --series-1: #2a78d6;        /* baseline */
+  --series-2: #eb6834;        /* limit lap */
+  --series-3: #1baf7a;        /* RL agent */
+  --neutral-bar: #b3b1a8;
+  --good: #006300;
+  --seq-0: #b7d3f6; --seq-1: #6da7ec; --seq-2: #2a78d6; --seq-3: #1c5cab; --seq-4: #104281;
+  --font-display: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "Barlow", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --step--1: 0.8125rem; --step-0: 0.9375rem; --step-1: 1.125rem; --step-2: 1.5rem; --step-3: 2.25rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0f0f0e; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #9a988f;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
+    --band: rgba(57, 135, 229, 0.09); --track: #34342f; --accent: #ff4d5e;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --neutral-bar: #6b6a63; --good: #0ca30c;
+    --seq-0: #184f95; --seq-1: #2a78d6; --seq-2: #5598e7; --seq-3: #9ec5f4; --seq-4: #e6f0fd;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f0f0e; --surface: #1a1a19; --ink: #ffffff; --ink-2: #c3c2b7; --muted: #9a988f;
+  --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
+  --band: rgba(57, 135, 229, 0.09); --track: #34342f; --accent: #ff4d5e;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --neutral-bar: #6b6a63; --good: #0ca30c;
+  --seq-0: #184f95; --seq-1: #2a78d6; --seq-2: #5598e7; --seq-3: #9ec5f4; --seq-4: #e6f0fd;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: var(--step-0); line-height: 1.5; }
+.page { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 56px; display: grid; gap: 20px; }
+@media (min-width: 720px) { .page { padding-inline: 28px; } }
+h1, h2, h3 { font-family: var(--font-display); margin: 0; text-wrap: balance; line-height: 1.15; }
+h1 { font-size: var(--step-3); font-weight: 700; letter-spacing: 0.005em; }
+h2 { font-size: var(--step-1); font-weight: 600; }
+p { margin: 0; }
+.eyebrow { font-family: var(--font-display); font-size: var(--step--1); font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-2); display: flex; gap: 10px; align-items: center; }
+.eyebrow::before { content: ""; width: 18px; height: 4px; background: repeating-linear-gradient(90deg, var(--accent) 0 6px, var(--surface) 6px 12px); border-radius: 1px; }
+header { display: grid; gap: 8px; }
+.lede { color: var(--ink-2); max-width: 70ch; }
+.meta { color: var(--muted); font-size: var(--step--1); font-variant-numeric: tabular-nums; }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.tab { font: 600 var(--step-0)/1 var(--font-display); letter-spacing: 0.04em; padding: 9px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--ink-2); cursor: pointer; text-transform: capitalize; }
+.tab[aria-selected="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.tab:focus-visible, .hit:focus-visible, .dot-hit:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.tile { background: var(--surface); padding: 14px 16px; display: grid; gap: 2px; align-content: start; }
+.tile .label { font-size: var(--step--1); color: var(--ink-2); }
+.tile .value { font-family: var(--font-display); font-size: var(--step-2); font-weight: 600; white-space: nowrap; }
+@media (max-width: 560px) { .tile.hero { grid-column: 1 / -1; } }
+.tile .sub { font-size: var(--step--1); color: var(--muted); font-variant-numeric: tabular-nums; }
+.tile.hero .value { font-size: var(--step-3); }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.card-head p { color: var(--ink-2); font-size: var(--step--1); max-width: 62ch; }
+.two { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .two { grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); } }
+.stack { display: grid; gap: 20px; }
+.multiples { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); }
+.mini { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 12px 6px; display: grid; gap: 4px; cursor: pointer; text-align: left; font: inherit; color: inherit; min-width: 0; }
+.mini:hover { border-color: var(--axis); }
+.mini:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+.mini .mini-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.mini .mini-name { font-family: var(--font-display); font-weight: 600; font-size: var(--step-1); text-transform: capitalize; }
+.mini .mini-val { font-size: var(--step--1); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.replay { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); align-items: start; }
+@media (min-width: 900px) { .replay { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); } }
+.replay-side { display: grid; gap: 12px; align-content: start; }
+.replay-status { display: grid; gap: 2px; }
+.replay-status .big { font-family: var(--font-display); font-size: var(--step-2); font-weight: 600; font-variant-numeric: tabular-nums; }
+.replay-status .small { color: var(--ink-2); font-size: var(--step--1); font-variant-numeric: tabular-nums; }
+.controls { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { font: 600 var(--step--1)/1 var(--font-body); padding: 9px 14px; border-radius: 6px; border: 1px solid var(--ink); background: var(--ink); color: var(--surface); cursor: pointer; }
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--axis); }
+.btn:focus-visible, input[type=range]:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
+input[type=range] { width: 100%; accent-color: var(--series-3); }
+.slider-label { font-size: var(--step--1); color: var(--ink-2); }
+.slider-ends { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: -6px; }
+.section-title { font-size: var(--step-2); }
+.chart { position: relative; width: 100%; min-width: 0; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: var(--step--1); color: var(--ink-2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.key-line { width: 16px; height: 2px; border-radius: 1px; display: inline-block; }
+.key-rect { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.axis text, .tick text { fill: var(--muted); font-size: 11px; font-family: var(--font-body); font-variant-numeric: tabular-nums; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.baseline { stroke: var(--axis); stroke-width: 1; }
+.band-label { fill: var(--muted); font-size: 10.5px; font-family: var(--font-display); font-weight: 600; letter-spacing: 0.04em; }
+.series { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.crosshair { stroke: var(--ink-2); stroke-width: 1; }
+.tooltip { position: absolute; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); padding: 8px 10px; font-size: var(--step--1); min-width: 140px; z-index: 5; font-variant-numeric: tabular-nums; }
+.tooltip .t-head { color: var(--muted); margin-bottom: 4px; }
+.tooltip .t-row { display: flex; align-items: center; gap: 8px; }
+.tooltip .t-row strong { font-weight: 600; }
+.tooltip .t-row .t-label { color: var(--ink-2); }
+.map-legend { display: flex; align-items: center; gap: 8px; font-size: var(--step--1); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.ramp { width: 120px; height: 8px; border-radius: 4px; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: var(--step--1); font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { color: var(--ink-2); font-weight: 600; font-family: var(--font-display); letter-spacing: 0.03em; }
+th:first-child, td:first-child { text-align: left; }
+tr.best td { font-weight: 600; }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border); color: var(--ink-2); }
+.pill.ok::before { content: "✓ "; color: var(--good); }
+.pill.bad::before { content: "✕ "; color: var(--accent); }
+.notes { display: grid; gap: 10px; color: var(--ink-2); font-size: var(--step--1); max-width: 80ch; }
+.notes strong { color: var(--ink); font-weight: 600; }
+details summary { cursor: pointer; color: var(--ink-2); font-size: var(--step--1); }
+details pre { font-size: 12px; overflow-x: auto; background: var(--bg); padding: 10px; border-radius: 6px; }
+.hit { fill: transparent; cursor: crosshair; }
+.dot-hit { fill: transparent; cursor: pointer; }
+@media (prefers-reduced-motion: no-preference) { .tab { transition: background-color .15s, color .15s; } }
+</style>
+
+<div class="page">
+  <header>
+    <div class="eyebrow">FormulaOneRL · Phase 4 · real circuits</div>
+    <h1>Driver Lap Report</h1>
+    <p class="lede">A cautious rule-based driver and a PPO-trained RL driver lap each track from a standing start. Both are timed against the theoretical limit lap for the same car: a perfect driver using 100% of grip and brakes. The baseline is the time the RL driver has to beat.</p>
+    <p class="meta" id="meta"></p>
+  </header>
+
+  <section class="stack" id="overview" hidden>
+    <div class="card-head">
+      <h2 class="section-title">Training across circuits</h2>
+      <p id="overview-meta">One RL driver, trained on every circuit at once. Each panel is its evaluation lap time on one circuit as training went on, against that circuit's baseline. Pick one to see it in detail.</p>
+    </div>
+    <div class="multiples" id="multiples"></div>
+  </section>
+
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Track"></nav>
+
+  <section class="tiles" id="tiles" aria-label="Summary"></section>
+
+  <section class="stack" id="training-section" hidden>
+    <div class="card-head"><h2 class="section-title">RL driver training</h2><p class="meta" id="training-meta"></p></div>
+    <nav class="tabs" id="run-tabs" aria-label="Training run"></nav>
+    <section class="tiles" id="training-tiles" aria-label="Training summary"></section>
+    <section class="card" id="replay-card" hidden>
+      <div class="card-head">
+        <h2>Watch it learn</h2>
+        <p>The lap the driver drove on this circuit at each training checkpoint. Early on it goes off or stops; later laps get cleaner and faster. Drag the slider, play a lap, or play the whole of training.</p>
+      </div>
+      <div class="replay">
+        <div class="chart" id="replay-map"></div>
+        <div class="replay-side">
+          <div class="replay-status" id="replay-status" aria-live="polite"></div>
+          <div class="controls">
+            <button type="button" class="btn" id="replay-play">Play lap</button>
+            <button type="button" class="btn ghost" id="replay-learn">Play training</button>
+          </div>
+          <label class="slider-label" for="replay-slider">Checkpoint</label>
+          <input type="range" id="replay-slider" min="0" max="0" step="1" value="0">
+          <div class="slider-ends"><span id="replay-first"></span><span id="replay-last"></span></div>
+          <div class="map-legend" id="replay-legend"></div>
+        </div>
+      </div>
+    </section>
+    <div class="two">
+      <section class="card">
+        <div class="card-head">
+          <h2>Reward per episode</h2>
+          <p>Mean training-episode return, averaged in bins across training. A finished lap pays 1.0 in progress, minus time and penalties; going off or stalling costs 1.0.</p>
+        </div>
+        <div class="chart" id="train-reward"></div>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Evaluation lap time</h2>
+          <p>Deterministic policy on held-out seeds at each checkpoint. Gaps are checkpoints where no lap finished.</p>
+        </div>
+        <div class="legend" id="eval-legend"></div>
+        <div class="chart" id="eval-laps"></div>
+      </section>
+    </div>
+  </section>
+
+  <div class="two">
+    <section class="card">
+      <div class="card-head">
+        <h2>Track map, best lap speed</h2>
+        <div class="map-legend" id="map-legend"></div>
+      </div>
+      <div class="chart" id="map"></div>
+    </section>
+    <section class="card">
+      <div class="card-head">
+        <h2>Where the time goes</h2>
+        <p>Mean time lost to the limit lap in each corner (T) and straight (S), across all completed laps. Sections add up to the total gap.</p>
+      </div>
+      <div class="legend" id="sector-legend"></div>
+      <div class="chart" id="sectors"></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Speed trace</h2>
+      <p>Best laps against the limit lap. Shaded bands are corners. The baseline brakes earlier and carries less speed through every corner.</p>
+    </div>
+    <div class="legend" id="speed-legend"></div>
+    <div class="chart" id="speed"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Time delta to the limit lap</h2>
+      <p>Cumulative seconds behind the limit lap along the best baseline lap. Steps up through braking zones and corners; flat where both are at full throttle.</p>
+    </div>
+    <div class="chart" id="delta"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Throttle and brake</h2>
+      <p>Best laps. Positive is throttle, negative is braking, as a fraction of the car's peak.</p>
+    </div>
+    <div class="legend" id="throttle-legend"></div>
+    <div class="chart" id="throttle"></div>
+  </section>
+
+  <div class="stack">
+    <section class="card">
+      <div class="card-head">
+        <h2>Lap time spread</h2>
+        <p>Every episode, one dot each. Each lap uses a slightly different seeded confidence margin.</p>
+      </div>
+      <div class="legend" id="spread-legend"></div>
+      <div class="chart" id="spread"></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>All laps</h2></div>
+      <div class="table-wrap" id="laps"></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>How these numbers are made</h2>
+    <div class="notes">
+      <p><strong>Baseline driver.</strong> Before the lap it plans one speed profile for a derated car: corners at a fraction of the car's lateral grip and braking points as if the brakes had only part of their capacity. Then it follows that plan, steering back to the racing line when it runs wide. Each episode draws its margins from a seeded jitter, so the 20 laps differ but replay exactly.</p>
+      <p><strong>Limit lap.</strong> The same planner with no margins, from a standing start. No driver in this simulator can lap faster, so it is the ceiling for the RL agent too.</p>
+      <p><strong>Simulator.</strong> Point-mass car on a track of constant-curvature segments, 50 Hz control. Car figures are the cited <code>EXAMPLE_CAR</code> values in <code>src/f1rl/config.py</code>. Both tracks here are synthetic layouts; real circuits load from FastF1 data.</p>
+      <details><summary>Run configuration</summary><pre id="config"></pre></details>
+    </div>
+  </section>
+</div>
+
+<script id="report-data" type="application/json">/*__DATA__*/null</script>
+<script>
+(function () {
+  "use strict";
+  const DATA = JSON.parse(document.getElementById("report-data").textContent);
+  const NS = "http://www.w3.org/2000/svg";
+  const $ = (id) => document.getElementById(id);
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  let current = 0;
+  try { const saved = Number(localStorage.getItem("baseline-report-track")); if (saved >= 0 && saved < DATA.length) current = saved; } catch (e) { /* storage unavailable */ }
+
+  function el(tag, attrs, parent) {
+    const node = document.createElementNS(NS, tag);
+    for (const k in attrs || {}) node.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(node);
+    return node;
+  }
+  function h(tag, cls, text, parent) {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined && text !== null) node.textContent = text;
+    if (parent) parent.appendChild(node);
+    return node;
+  }
+  const fmt = (v, d) => (v === null || v === undefined ? "–" : Number(v).toFixed(d));
+  function niceTicks(min, max, count) {
+    const span = max - min || 1;
+    const raw = span / count;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => span / s <= count) || 10 * mag;
+    const out = [];
+    for (let v = Math.ceil(min / step) * step; v <= max + step * 1e-9; v += step) out.push(Math.round(v / step) * step);
+    return { ticks: out, step };
+  }
+  // Decimals a tick step needs to print every tick distinctly (0.25 -> 2).
+  function decimals(step) {
+    for (let d = 0; d < 4; d++) if (Math.abs(step * 10 ** d - Math.round(step * 10 ** d)) < 1e-9) return d;
+    return 4;
+  }
+  function lerpColor(stops, t) {
+    t = Math.max(0, Math.min(1, t));
+    const seg = t * (stops.length - 1);
+    const i = Math.min(Math.floor(seg), stops.length - 2);
+    const f = seg - i;
+    const a = stops[i], b = stops[i + 1];
+    const c = [0, 1, 2].map((k) => Math.round(a[k] + (b[k] - a[k]) * f));
+    return "rgb(" + c.join(",") + ")";
+  }
+  const hexRgb = (hex) => { const v = hex.replace("#", ""); return [0, 2, 4].map((i) => parseInt(v.slice(i, i + 2), 16)); };
+  function tooltip(container) {
+    let tip = container.querySelector(".tooltip");
+    if (!tip) { tip = h("div", "tooltip", null, container); tip.hidden = true; tip.setAttribute("role", "status"); }
+    return tip;
+  }
+  function placeTip(tip, container, x, y) {
+    tip.hidden = false;
+    const w = tip.offsetWidth, hgt = tip.offsetHeight, cw = container.clientWidth;
+    let left = x + 14;
+    if (left + w > cw) left = x - w - 14;
+    tip.style.left = Math.max(0, left) + "px";
+    tip.style.top = Math.max(0, y - hgt / 2) + "px";
+  }
+  function tipRows(tip, head, rows) {
+    tip.replaceChildren();
+    h("div", "t-head", head, tip);
+    rows.forEach((r) => {
+      const row = h("div", "t-row", null, tip);
+      if (r.color) { const k = h("span", "key-line", null, row); k.style.background = r.color; }
+      h("strong", null, r.value, row);
+      h("span", "t-label", r.label, row);
+    });
+  }
+  function legend(target, items) {
+    target.replaceChildren();
+    items.forEach((it) => {
+      const s = h("span", null, null, target);
+      const k = h("span", it.rect ? "key-rect" : "key-line", null, s);
+      k.style.background = it.color;
+      s.appendChild(document.createTextNode(it.label));
+    });
+  }
+
+  // ---------- line chart (shared x; null values break the line) ----------
+  const distFmt = (v) => (v >= 1000 ? (v / 1000).toFixed(v % 1000 ? 1 : 0) + " km" : v + " m");
+  function lineChart(container, opt) {
+    container.replaceChildren();
+    const W = Math.max(container.clientWidth, 280), H = opt.height || 220;
+    const m = { l: 50, r: 12, t: 18, b: 26 };
+    const x = opt.x;
+    const xMin = opt.xMin !== undefined ? opt.xMin : 0, xMax = x[x.length - 1];
+    const xFmt = opt.xFmt || distFmt;
+    const tipHead = opt.tipHead || ((xv) => Math.round(xv) + " m");
+    let lo = Infinity, hi = -Infinity;
+    const grow = (v) => { if (v === null || v === undefined) return; if (v < lo) lo = v; if (v > hi) hi = v; };
+    opt.series.forEach((s) => s.values.forEach(grow));
+    (opt.refs || []).forEach((r) => grow(r.value));
+    if (opt.yMin !== undefined) lo = Math.min(lo, opt.yMin);
+    if (opt.yMax !== undefined) hi = Math.max(hi, opt.yMax);
+    if (opt.yPad) { const pad = (hi - lo) * opt.yPad; lo -= pad; hi += pad; }
+    const yt = niceTicks(lo, hi, 4);
+    lo = Math.min(lo, yt.ticks[0]); hi = Math.max(hi, yt.ticks[yt.ticks.length - 1]);
+    const sx = (v) => m.l + ((v - xMin) / (xMax - xMin || 1)) * (W - m.l - m.r);
+    const sy = (v) => H - m.b - ((v - lo) / (hi - lo || 1)) * (H - m.t - m.b);
+    const svg = el("svg", { viewBox: "0 0 " + W + " " + H, height: H, role: "img", "aria-label": opt.label }, container);
+    (opt.bands || []).forEach((b) => {
+      el("rect", { x: sx(b.start_m), y: m.t, width: Math.max(1, sx(b.end_m) - sx(b.start_m)), height: H - m.t - m.b, fill: "var(--band)" }, svg);
+      const t = el("text", { x: (sx(b.start_m) + sx(b.end_m)) / 2, y: m.t - 5, "text-anchor": "middle", class: "band-label" }, svg);
+      t.textContent = b.name;
+    });
+    yt.ticks.forEach((v) => {
+      el("line", { x1: m.l, x2: W - m.r, y1: sy(v), y2: sy(v), class: v === 0 && lo < 0 ? "baseline" : "gridline" }, svg);
+      const t = el("text", { x: m.l - 6, y: sy(v) + 4, "text-anchor": "end", fill: "var(--muted)", "font-size": "11" }, svg);
+      t.textContent = opt.yFmt ? opt.yFmt(v, yt.step) : v;
+    });
+    el("line", { x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b, class: "baseline" }, svg);
+    niceTicks(xMin, xMax, Math.max(3, Math.floor(W / 110))).ticks.forEach((v) => {
+      if (v > xMax || v < xMin) return;
+      const t = el("text", { x: sx(v), y: H - 8, "text-anchor": "middle", fill: "var(--muted)", "font-size": "11" }, svg);
+      t.textContent = xFmt(v);
+    });
+    (opt.refs || []).forEach((r) => {
+      el("line", { x1: m.l, x2: W - m.r, y1: sy(r.value), y2: sy(r.value), stroke: r.color, "stroke-width": 2 }, svg);
+      const t = el("text", { x: m.l + 6, y: sy(r.value) + (r.below ? 15 : -6), "text-anchor": "start", fill: "var(--ink-2)", "font-size": "11.5", "font-weight": "600" }, svg);
+      t.textContent = r.label;
+    });
+    opt.series.forEach((s) => {
+      let d = "", pen = false;
+      s.values.forEach((v, i) => {
+        if (v === null || v === undefined) { pen = false; return; }
+        d += (pen ? "L" : "M") + sx(x[i]).toFixed(1) + " " + sy(v).toFixed(1); pen = true;
+      });
+      if (s.area) {
+        const zero = sy(Math.max(lo, Math.min(hi, 0)));
+        el("path", { d: d + "L" + sx(x[x.length - 1]) + " " + zero + "L" + sx(x[0]) + " " + zero + "Z", fill: s.color, opacity: 0.1 }, svg);
+      }
+      el("path", { d: d, class: "series", stroke: s.color }, svg);
+      if (s.markers) s.values.forEach((v, i) => { if (v !== null && v !== undefined) el("circle", { cx: sx(x[i]), cy: sy(v), r: 4, fill: s.color, stroke: "var(--surface)", "stroke-width": 2 }, svg); });
+    });
+    if (opt.endLabel) {
+      const s = opt.series[0], v = s.values[s.values.length - 1];
+      el("circle", { cx: sx(xMax), cy: sy(v), r: 4, fill: s.color, stroke: "var(--surface)", "stroke-width": 2 }, svg);
+      const t = el("text", { x: sx(xMax) - 10, y: sy(v) + 18, "text-anchor": "end", fill: "var(--ink)", "font-size": "12", "font-weight": "600" }, svg);
+      t.textContent = opt.endLabel(v);
+    }
+    const cross = el("line", { y1: m.t, y2: H - m.b, class: "crosshair", visibility: "hidden" }, svg);
+    const dots = opt.series.map((s) => el("circle", { r: 4, fill: s.color, stroke: "var(--surface)", "stroke-width": 2, visibility: "hidden" }, svg));
+    const hit = el("rect", { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, class: "hit", tabindex: 0, "aria-label": opt.label + ": use arrow keys to read values" }, svg);
+    const tip = tooltip(container);
+    let idx = 0;
+    function show(i) {
+      idx = Math.max(0, Math.min(x.length - 1, i));
+      const px = sx(x[idx]);
+      cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("visibility", "visible");
+      let anchorY = null;
+      opt.series.forEach((s, k) => {
+        const v = s.values[idx];
+        if (v === null || v === undefined) { dots[k].setAttribute("visibility", "hidden"); return; }
+        dots[k].setAttribute("cx", px); dots[k].setAttribute("cy", sy(v)); dots[k].setAttribute("visibility", "visible");
+        if (anchorY === null) anchorY = sy(v);
+      });
+      const section = (opt.sections || []).find((b) => x[idx] >= b.start_m && x[idx] < b.end_m);
+      tipRows(tip, tipHead(x[idx]) + (section ? " · " + section.name : ""), opt.series.map((s) => {
+        const v = s.values[idx];
+        return { color: s.color, value: v === null || v === undefined ? "–" : opt.valueFmt(v), label: s.label };
+      }));
+      const scale = container.clientWidth / W;
+      placeTip(tip, container, px * scale, (anchorY === null ? H / 2 : anchorY) * scale);
+    }
+    function hide() { cross.setAttribute("visibility", "hidden"); dots.forEach((d) => d.setAttribute("visibility", "hidden")); tip.hidden = true; }
+    hit.addEventListener("pointermove", (e) => {
+      const r = svg.getBoundingClientRect();
+      const px = (e.clientX - r.left) * (W / r.width);
+      const v = xMin + ((px - m.l) / (W - m.l - m.r)) * (xMax - xMin);
+      let best = 0, bd = Infinity;
+      for (let i = 0; i < x.length; i++) { const d = Math.abs(x[i] - v); if (d < bd) { bd = d; best = i; } }
+      show(best);
+    });
+    hit.addEventListener("pointerleave", hide);
+    hit.addEventListener("focus", () => show(idx));
+    hit.addEventListener("blur", hide);
+    hit.addEventListener("keydown", (e) => {
+      const stepN = Math.max(1, Math.round(x.length / 60));
+      if (e.key === "ArrowRight") { show(idx + stepN); e.preventDefault(); }
+      if (e.key === "ArrowLeft") { show(idx - stepN); e.preventDefault(); }
+    });
+  }
+
+  // ---------- track map ----------
+  function trackMap(container, view) {
+    container.replaceChildren();
+    const mp = view.map;
+    const W = Math.max(container.clientWidth, 280);
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    mp.x_m.forEach((v) => { x0 = Math.min(x0, v); x1 = Math.max(x1, v); });
+    mp.y_m.forEach((v) => { y0 = Math.min(y0, v); y1 = Math.max(y1, v); });
+    const pad = 34;
+    const scale = Math.min((W - 2 * pad) / (x1 - x0 || 1), 380 / (y1 - y0 || 1));
+    const H = (y1 - y0) * scale + 2 * pad;
+    const ox = (W - (x1 - x0) * scale) / 2;
+    const px = (i) => ox + (mp.x_m[i] - x0) * scale;
+    const py = (i) => pad + (y1 - mp.y_m[i]) * scale;
+    const svg = el("svg", { viewBox: "0 0 " + W + " " + H, height: H, role: "img", "aria-label": "Track map of " + view.name + " coloured by best-lap speed" }, container);
+    let d = "";
+    mp.x_m.forEach((_, i) => { d += (i ? "L" : "M") + px(i).toFixed(1) + " " + py(i).toFixed(1); });
+    el("path", { d: d, fill: "none", stroke: "var(--track)", "stroke-width": 12, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+    const speeds = mp.speed_kmh;
+    const stops = ["--seq-0", "--seq-1", "--seq-2", "--seq-3", "--seq-4"].map((n) => hexRgb(css(n)));
+    let vmin = Infinity, vmax = -Infinity;
+    speeds.forEach((v) => { vmin = Math.min(vmin, v); vmax = Math.max(vmax, v); });
+    for (let i = 0; i < speeds.length - 1; i++) {
+      el("line", { x1: px(i), y1: py(i), x2: px(i + 1), y2: py(i + 1), stroke: lerpColor(stops, (speeds[i] - vmin) / (vmax - vmin || 1)), "stroke-width": 5, "stroke-linecap": "round" }, svg);
+    }
+    // Start / finish line: a short kerb-red tick across the track at distance 0.
+    const dx = mp.x_m[1] - mp.x_m[0], dy = mp.y_m[1] - mp.y_m[0], len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len;
+    el("line", { x1: px(0) + nx * 10, y1: py(0) - ny * 10, x2: px(0) - nx * 10, y2: py(0) + ny * 10, stroke: "var(--accent)", "stroke-width": 3 }, svg);
+    const sf = el("text", { x: px(0) + nx * 24, y: py(0) - ny * 24 + 4, "text-anchor": "middle", class: "band-label" }, svg);
+    sf.textContent = "S/F";
+    // Corner labels, pushed to the outside of each corner.
+    view.sections.filter((s) => s.is_corner).forEach((s) => {
+      const mid = (s.start_m + s.end_m) / 2;
+      let i = 0; while (i < mp.distance_m.length - 2 && mp.distance_m[i] < mid) i++;
+      const tx = mp.x_m[i + 1] - mp.x_m[i], ty = mp.y_m[i + 1] - mp.y_m[i], tl = Math.hypot(tx, ty) || 1;
+      const ox2 = ty / tl, oy2 = -tx / tl; // right of travel = outside of a left-hand corner
+      const lx = px(i) + ox2 * 20, ly = py(i) - oy2 * 20;
+      const t = el("text", { x: lx, y: ly + 4, "text-anchor": "middle", fill: "var(--ink-2)", "font-size": "12", "font-weight": "600", "font-family": "var(--font-display)" }, svg);
+      t.textContent = s.name;
+    });
+    const marker = el("circle", { r: 5, fill: "var(--surface)", stroke: "var(--ink)", "stroke-width": 2, visibility: "hidden" }, svg);
+    const hit = el("rect", { x: 0, y: 0, width: W, height: H, class: "hit" }, svg);
+    const tip = tooltip(container);
+    hit.addEventListener("pointermove", (e) => {
+      const r = svg.getBoundingClientRect();
+      const mx = (e.clientX - r.left) * (W / r.width), my = (e.clientY - r.top) * (H / r.height);
+      let best = 0, bd = Infinity;
+      for (let i = 0; i < speeds.length; i++) { const dd = (px(i) - mx) ** 2 + (py(i) - my) ** 2; if (dd < bd) { bd = dd; best = i; } }
+      if (bd > 30 * 30) { marker.setAttribute("visibility", "hidden"); tip.hidden = true; return; }
+      marker.setAttribute("cx", px(best)); marker.setAttribute("cy", py(best)); marker.setAttribute("visibility", "visible");
+      const dist = mp.distance_m[best];
+      const section = view.sections.find((s) => dist >= s.start_m && dist < s.end_m);
+      tipRows(tip, Math.round(dist) + " m" + (section ? " · " + section.name : ""), [{ color: css("--series-1"), value: fmt(speeds[best], 0) + " km/h", label: "Best lap" }]);
+      const sc = container.clientWidth / W;
+      placeTip(tip, container, px(best) * sc, py(best) * sc);
+    });
+    hit.addEventListener("pointerleave", () => { marker.setAttribute("visibility", "hidden"); tip.hidden = true; });
+    const lg = $("map-legend");
+    lg.replaceChildren();
+    h("span", null, fmt(vmin, 0) + " km/h", lg);
+    const ramp = h("span", "ramp", null, lg);
+    ramp.style.background = "linear-gradient(90deg, " + stops.map((c) => "rgb(" + c.join(",") + ")").join(",") + ")";
+    h("span", null, fmt(vmax, 0) + " km/h", lg);
+  }
+
+  // ---------- sector losses: horizontal bars ----------
+  function sectorBars(container, view) {
+    container.replaceChildren();
+    const rows = view.sections.filter((s) => s.mean_delta_s !== null);
+    const W = Math.max(container.clientWidth, 280);
+    const rowH = 30, m = { l: 92, r: 70, t: 4, b: 22 };
+    const H = m.t + m.b + rows.length * rowH;
+    const max = Math.max(...rows.map((r) => r.mean_delta_s), 0.001);
+    const xt = niceTicks(0, max, 4);
+    const xMax = xt.ticks[xt.ticks.length - 1];
+    const sx = (v) => m.l + (v / xMax) * (W - m.l - m.r);
+    const svg = el("svg", { viewBox: "0 0 " + W + " " + H, height: H, role: "img", "aria-label": "Time lost per section" }, container);
+    xt.ticks.forEach((v) => {
+      el("line", { x1: sx(v), x2: sx(v), y1: m.t, y2: H - m.b, class: v === 0 ? "baseline" : "gridline" }, svg);
+      const t = el("text", { x: sx(v), y: H - 6, "text-anchor": "middle", fill: "var(--muted)", "font-size": "11" }, svg);
+      t.textContent = v.toFixed(Math.max(1, decimals(xt.step))) + " s";
+    });
+    const tip = tooltip(container);
+    rows.forEach((r, i) => {
+      const cy = m.t + i * rowH + rowH / 2;
+      const color = r.is_corner ? "var(--series-1)" : "var(--neutral-bar)";
+      const name = el("text", { x: 0, y: cy + 4, fill: "var(--ink)", "font-size": "12.5", "font-weight": "600", "font-family": "var(--font-display)" }, svg);
+      name.textContent = r.name;
+      const desc = el("text", { x: 26, y: cy + 4, fill: "var(--muted)", "font-size": "11" }, svg);
+      desc.textContent = r.is_corner ? "r " + Math.round(r.min_radius_m) + " m" : Math.round(r.end_m - r.start_m) + " m";
+      const w = Math.max(2, sx(r.mean_delta_s) - m.l), bh = 16;
+      // Bar: square at the baseline, 4px rounded data-end.
+      const x0 = m.l, y0 = cy - bh / 2, rr = Math.min(4, w / 2);
+      el("path", { d: "M" + x0 + " " + y0 + "H" + (x0 + w - rr) + "Q" + (x0 + w) + " " + y0 + " " + (x0 + w) + " " + (y0 + rr) + "V" + (y0 + bh - rr) + "Q" + (x0 + w) + " " + (y0 + bh) + " " + (x0 + w - rr) + " " + (y0 + bh) + "H" + x0 + "Z", fill: color }, svg);
+      const val = el("text", { x: x0 + w + 6, y: cy + 4, fill: "var(--ink-2)", "font-size": "11.5" }, svg);
+      val.textContent = "+" + r.mean_delta_s.toFixed(3) + " s";
+      const hit = el("rect", { x: 0, y: cy - rowH / 2, width: W, height: rowH, class: "dot-hit", tabindex: 0, "aria-label": r.name + " loses " + r.mean_delta_s.toFixed(3) + " seconds" }, svg);
+      const showTip = () => {
+        tipRows(tip, r.name + (r.is_corner ? " · corner, r " + Math.round(r.min_radius_m) + " m" : " · straight"), [
+          { value: "+" + r.mean_delta_s.toFixed(3) + " s", label: "lost (mean)" },
+          { color: css("--series-1"), value: fmt(r.mean_time_s, 3) + " s", label: "baseline" },
+          { color: css("--series-2"), value: fmt(r.reference_time_s, 3) + " s", label: "limit lap" },
+          { value: fmt(r.mean_min_speed_kmh, 0) + " / " + fmt(r.reference_min_speed_kmh, 0) + " km/h", label: "min speed vs limit" },
+        ]);
+        const sc = container.clientWidth / W;
+        placeTip(tip, container, (x0 + w) * sc, cy * sc);
+      };
+      hit.addEventListener("pointermove", showTip);
+      hit.addEventListener("focus", showTip);
+      hit.addEventListener("pointerleave", () => { tip.hidden = true; });
+      hit.addEventListener("blur", () => { tip.hidden = true; });
+    });
+    legend($("sector-legend"), [{ label: "Corner", color: css("--series-1"), rect: true }, { label: "Straight", color: css("--neutral-bar"), rect: true }]);
+  }
+
+  // ---------- lap time spread: dot strip ----------
+  function spread(container, view) {
+    container.replaceChildren();
+    const laps = view.laps.filter((l) => l.completed);
+    const limit = view.summary.limit_lap_time_s, mean = view.summary.mean_s;
+    const W = Math.max(container.clientWidth, 280), m = { l: 16, r: 16, t: 26, b: 26 };
+    const times = laps.map((l) => l.lap_time_s).concat([limit]);
+    const lo = Math.min(...times), hi = Math.max(...times);
+    const padT = (hi - lo) * 0.08 || 0.1;
+    const xt = niceTicks(lo - padT, hi + padT, Math.max(3, Math.floor(W / 90)));
+    const a = Math.min(lo - padT, xt.ticks[0]), b = Math.max(hi + padT, xt.ticks[xt.ticks.length - 1]);
+    const sx = (v) => m.l + ((v - a) / (b - a)) * (W - m.l - m.r);
+    // Stack dots that would overlap (simple beeswarm).
+    const placed = [];
+    const r = 5;
+    laps.slice().sort((p, q) => p.lap_time_s - q.lap_time_s).forEach((l) => {
+      const x = sx(l.lap_time_s);
+      let level = 0;
+      while (placed.some((p) => p.level === level && Math.abs(p.x - x) < 2 * r + 2)) level++;
+      placed.push({ x, level, lap: l });
+    });
+    const levels = Math.max(1, ...placed.map((p) => p.level + 1));
+    const H = m.t + m.b + Math.max(60, levels * (2 * r + 3) + 20);
+    const base = H - m.b - 10;
+    const svg = el("svg", { viewBox: "0 0 " + W + " " + H, height: H, role: "img", "aria-label": "Lap time of every episode" }, container);
+    el("line", { x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b, class: "baseline" }, svg);
+    xt.ticks.forEach((v) => {
+      if (v < a || v > b) return;
+      el("line", { x1: sx(v), x2: sx(v), y1: m.t, y2: H - m.b, class: "gridline" }, svg);
+      const t = el("text", { x: sx(v), y: H - 8, "text-anchor": "middle", fill: "var(--muted)", "font-size": "11" }, svg);
+      t.textContent = v.toFixed(decimals(xt.step)) + " s";
+    });
+    const refLine = (v, color, label, anchor) => {
+      el("line", { x1: sx(v), x2: sx(v), y1: m.t - 4, y2: H - m.b, stroke: color, "stroke-width": 2 }, svg);
+      const t = el("text", { x: sx(v) + (anchor === "start" ? 5 : -5), y: m.t - 10, "text-anchor": anchor, fill: "var(--ink-2)", "font-size": "11.5", "font-weight": "600" }, svg);
+      t.textContent = label;
+    };
+    refLine(limit, "var(--series-2)", "Limit " + limit.toFixed(2) + " s", "start");
+    if (mean) refLine(mean, "var(--ink-2)", "Mean " + mean.toFixed(2) + " s", "end");
+    const tip = tooltip(container);
+    placed.forEach((p) => {
+      const cy = base - p.level * (2 * r + 3);
+      el("circle", { cx: p.x, cy, r, fill: "var(--series-1)", stroke: "var(--surface)", "stroke-width": 2 }, svg);
+      const hit = el("circle", { cx: p.x, cy, r: 12, class: "dot-hit", tabindex: 0, "aria-label": "Seed " + p.lap.seed + ", " + p.lap.lap_time_s.toFixed(3) + " seconds" }, svg);
+      const showTip = () => {
+        tipRows(tip, "Seed " + p.lap.seed, [
+          { value: p.lap.lap_time_s.toFixed(3) + " s", label: "+" + p.lap.gap_pct.toFixed(2) + "% to limit" },
+          { value: (p.lap.corner_grip_margin * 100).toFixed(1) + "%", label: "corner grip used" },
+          { value: (p.lap.braking_margin * 100).toFixed(1) + "%", label: "braking planned at" },
+        ]);
+        const sc = container.clientWidth / W;
+        placeTip(tip, container, p.x * sc, cy * sc);
+      };
+      hit.addEventListener("pointermove", showTip);
+      hit.addEventListener("focus", showTip);
+      hit.addEventListener("pointerleave", () => { tip.hidden = true; });
+      hit.addEventListener("blur", () => { tip.hidden = true; });
+    });
+    legend($("spread-legend"), [{ label: "Baseline lap", color: css("--series-1"), rect: true }, { label: "Limit lap", color: css("--series-2") }]);
+  }
+
+  function lapTable(target, view) {
+    target.replaceChildren();
+    const table = h("table", null, null, target);
+    const head = h("tr", null, null, h("thead", null, null, table));
+    ["Seed", "Result", "Lap time", "Gap", "Corner grip", "Braking", "Top speed"].forEach((c) => h("th", null, c, head));
+    const body = h("tbody", null, null, table);
+    view.laps.forEach((l) => {
+      const tr = h("tr", l.seed === view.best_seed ? "best" : null, null, body);
+      h("td", null, String(l.seed) + (l.seed === view.best_seed ? " · best" : ""), tr);
+      const res = h("td", null, null, tr);
+      h("span", "pill " + (l.completed ? "ok" : "bad"), l.completed ? "Finished" : l.off_track ? "Off at " + Math.round(l.off_track_at_m) + " m" : "Timed out", res);
+      h("td", null, l.lap_time_s ? l.lap_time_s.toFixed(3) + " s" : "–", tr);
+      h("td", null, l.gap_pct !== null ? "+" + l.gap_pct.toFixed(2) + "%" : "–", tr);
+      h("td", null, (l.corner_grip_margin * 100).toFixed(1) + "%", tr);
+      h("td", null, (l.braking_margin * 100).toFixed(1) + "%", tr);
+      h("td", null, l.top_speed_kmh.toFixed(0) + " km/h", tr);
+    });
+  }
+
+  function tiles(view) {
+    const s = view.summary, t = $("tiles");
+    t.replaceChildren();
+    const tile = (label, value, sub, hero) => {
+      const d = h("div", "tile" + (hero ? " hero" : ""), null, t);
+      h("div", "label", label, d); h("div", "value", value, d); if (sub) h("div", "sub", sub, d);
+    };
+    tile("Mean lap", fmt(s.mean_s, 3) + " s", "± " + fmt(s.std_s, 3) + " s over " + s.completed + " laps", true);
+    tile("Limit lap", fmt(s.limit_lap_time_s, 3) + " s", "perfect driver, standing start");
+    tile("Gap to limit", s.gap_to_limit_pct === null ? "–" : "+" + s.gap_to_limit_pct.toFixed(2) + "%", s.mean_s ? "+" + (s.mean_s - s.limit_lap_time_s).toFixed(3) + " s per lap" : null);
+    tile("Best lap", fmt(s.best_s, 3) + " s", "worst " + fmt(s.worst_s, 3) + " s");
+    tile("Laps finished", s.completed + " / " + s.episodes, s.off_track + " off track");
+  }
+
+  let currentRun = null;
+  function trainingRun(view) {
+    const runs = view.training || [];
+    if (!runs.length) return null;
+    const bestLap = (r) => Math.min(...r.eval.mean_lap_s.filter((v) => v !== null), Infinity);
+    const fastest = runs.slice().sort((a, b) => bestLap(a) - bestLap(b))[0];
+    return runs.find((r) => r.name === currentRun) || fastest;
+  }
+
+  function renderTraining(view, run) {
+    const section = $("training-section");
+    section.hidden = !run;
+    if (!run) return;
+    const runTabs = $("run-tabs");
+    runTabs.replaceChildren();
+    runTabs.hidden = view.training.length < 2;
+    view.training.forEach((r) => {
+      const b = h("button", "tab", r.name, runTabs);
+      b.type = "button"; b.style.textTransform = "none";
+      b.setAttribute("aria-pressed", String(r.name === run.name));
+      b.setAttribute("aria-selected", String(r.name === run.name));
+      b.addEventListener("click", () => { currentRun = r.name; render(); });
+    });
+    const ev = run.eval, s = view.summary;
+    const finished = ev.mean_lap_s.map((v, i) => (v !== null && ev.completion_rate[i] === 1 ? v : null)).filter((v) => v !== null);
+    const best = run.best_lap && run.best_lap.completed ? run.best_lap.lap_time_s : null;
+    const steps = ev.timesteps.length ? ev.timesteps[ev.timesteps.length - 1] : 0;
+    const ppo = run.config.ppo || {}, env = run.config.env || {};
+    $("training-meta").textContent = "run " + run.name + " · " + steps.toLocaleString("en-US") + " decisions · action every " + ((run.config.sim && run.config.sim.dt_s) || 0.02) * (env.action_repeat || 1) + " s · γ " + ppo.gamma + " · seed " + run.config.run.seed + " · git " + String(run.meta.git_sha).slice(0, 8);
+    const t = $("training-tiles");
+    t.replaceChildren();
+    const tile = (label, value, sub, hero) => {
+      const d = h("div", "tile" + (hero ? " hero" : ""), null, t);
+      h("div", "label", label, d); h("div", "value", value, d); if (sub) h("div", "sub", sub, d);
+    };
+    tile("RL best-model lap", best === null ? "–" : best.toFixed(3) + " s", "deterministic, held-out seed", true);
+    tile("vs baseline mean", best === null || !s.mean_s ? "–" : (best - s.mean_s >= 0 ? "+" : "−") + Math.abs(best - s.mean_s).toFixed(3) + " s", s.mean_s ? "baseline " + s.mean_s.toFixed(3) + " s" : null);
+    tile("vs limit lap", best === null ? "–" : "+" + (100 * (best / s.limit_lap_time_s - 1)).toFixed(2) + "%", "limit " + s.limit_lap_time_s.toFixed(3) + " s");
+    const lastRate = ev.completion_rate.length ? ev.completion_rate[ev.completion_rate.length - 1] : 0;
+    tile("Eval laps finished", Math.round(lastRate * 100) + "%", "at the last checkpoint");
+    tile("First clean eval", (() => { const i = ev.completion_rate.findIndex((r) => r === 1); return i < 0 ? "never" : ev.timesteps[i].toLocaleString("en-US"); })(), "decisions into training");
+    const c1 = css("--series-1"), c2 = css("--series-2"), c3 = css("--series-3");
+    const kFmt = (v) => (v >= 1e6 ? (v / 1e6).toFixed(v % 1e6 ? 1 : 0) + "M" : v >= 1000 ? Math.round(v / 1000) + "k" : String(v));
+    const tr = run.train;
+    if (tr.timesteps.length) {
+      lineChart($("train-reward"), { label: "Mean training-episode reward", x: tr.timesteps, xFmt: kFmt, tipHead: (v) => kFmt(v) + " decisions", height: 220,
+        series: [{ label: "mean reward", color: c3, values: tr.mean_return }],
+        yFmt: (v, step) => v.toFixed(decimals(step)), valueFmt: (v) => (v >= 0 ? "+" : "") + v.toFixed(3) });
+    }
+    legend($("eval-legend"), [{ label: "RL agent, mean eval lap", color: c3 }, { label: "Baseline mean", color: c1 }, { label: "Limit lap", color: c2 }]);
+    const refs = [{ value: s.limit_lap_time_s, label: "Limit " + s.limit_lap_time_s.toFixed(2) + " s", color: c2, below: true }];
+    if (s.mean_s) refs.push({ value: s.mean_s, label: "Baseline " + s.mean_s.toFixed(2) + " s", color: c1 });
+    lineChart($("eval-laps"), { label: "Evaluation lap time during training", x: ev.timesteps, xFmt: kFmt, tipHead: (v) => kFmt(v) + " decisions", height: 220, refs, yPad: 0.05,
+      series: [{ label: "mean eval lap", color: c3, values: ev.mean_lap_s, markers: true }],
+      yFmt: (v, step) => v.toFixed(decimals(step)) + " s", valueFmt: (v) => v.toFixed(3) + " s" });
+    const evalSvg = $("eval-laps").querySelector("svg");
+    markCheckpoint = (steps) => {
+      if (!evalSvg || !ev.timesteps.length) return;
+      let mark = evalSvg.querySelector(".cp-mark");
+      if (!mark) { mark = el("line", { class: "cp-mark", stroke: "var(--ink)", "stroke-width": 1.5, "stroke-dasharray": "0" }, evalSvg); }
+      const vb = evalSvg.viewBox.baseVal, ml = 50, mr = 12;
+      const x0 = ev.timesteps[0] > 0 ? 0 : 0, xMax = ev.timesteps[ev.timesteps.length - 1];
+      const x = ml + ((steps - x0) / (xMax - x0 || 1)) * (vb.width - ml - mr);
+      mark.setAttribute("x1", x); mark.setAttribute("x2", x); mark.setAttribute("y1", 18); mark.setAttribute("y2", vb.height - 26);
+    };
+    replayCard(view, run);
+    if (run.replays && run.replays.length) markCheckpoint(run.replays[replayState.idx].timesteps);
+  }
+
+  // ---------- replay: watch the driver learn ----------
+  const kFmtG = (v) => (v >= 1e6 ? (v / 1e6).toFixed(v % 1e6 ? 1 : 0) + "M" : v >= 1000 ? Math.round(v / 1000) + "k" : String(v));
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const replayState = { key: null, idx: null, raf: 0, learnTimer: 0 };
+  function stopReplay() {
+    cancelAnimationFrame(replayState.raf); replayState.raf = 0;
+    clearInterval(replayState.learnTimer); replayState.learnTimer = 0;
+    $("replay-play").textContent = "Play lap"; $("replay-learn").textContent = "Play training";
+  }
+  function replayCard(view, run) {
+    const card = $("replay-card");
+    const reps = (run && run.replays) || [];
+    card.hidden = !reps.length;
+    if (!reps.length) return;
+    const key = view.name + "/" + run.name;
+    stopReplay();  // a re-render replaces the map the animation draws into
+    if (replayState.key !== key || replayState.idx >= reps.length) {
+      replayState.key = key; replayState.idx = reps.length - 1;
+    }
+    const slider = $("replay-slider");
+    slider.max = String(reps.length - 1);
+    slider.value = String(replayState.idx);
+    $("replay-first").textContent = kFmtG(reps[0].timesteps);
+    $("replay-last").textContent = kFmtG(reps[reps.length - 1].timesteps) + " decisions";
+
+    // Static map: track outline, S/F line, corner labels.
+    const box = $("replay-map");
+    box.replaceChildren();
+    const mp = view.map;
+    const W = Math.max(box.clientWidth, 280);
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    mp.x_m.forEach((v) => { x0 = Math.min(x0, v); x1 = Math.max(x1, v); });
+    mp.y_m.forEach((v) => { y0 = Math.min(y0, v); y1 = Math.max(y1, v); });
+    const pad = 28, scale = Math.min((W - 2 * pad) / (x1 - x0 || 1), 420 / (y1 - y0 || 1));
+    const H = (y1 - y0) * scale + 2 * pad, ox = (W - (x1 - x0) * scale) / 2;
+    const px = (x) => ox + (x - x0) * scale, py = (y) => pad + (y1 - y) * scale;
+    const svg = el("svg", { viewBox: "0 0 " + W + " " + H, height: H, role: "img", "aria-label": "Replay of the driver's lap on " + view.name }, box);
+    let d = "";
+    mp.x_m.forEach((_, i) => { d += (i ? "L" : "M") + px(mp.x_m[i]).toFixed(1) + " " + py(mp.y_m[i]).toFixed(1); });
+    el("path", { d, fill: "none", stroke: "var(--track)", "stroke-width": 12, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+    const sfX = px(mp.x_m[0]), sfY = py(mp.y_m[0]);
+    el("line", { x1: sfX, y1: sfY - 9, x2: sfX, y2: sfY + 9, stroke: "var(--accent)", "stroke-width": 3 }, svg);
+    const trail = el("g", {}, svg);
+    const crash = el("g", { visibility: "hidden" }, svg);
+    el("path", { d: "M-7 -7L7 7M7 -7L-7 7", stroke: "var(--accent)", "stroke-width": 3, "stroke-linecap": "round" }, crash);
+    const car = el("circle", { r: 6, fill: "var(--series-3)", stroke: "var(--surface)", "stroke-width": 2 }, svg);
+    const stops = ["--seq-0", "--seq-1", "--seq-2", "--seq-3", "--seq-4"].map((n) => hexRgb(css(n)));
+    const vmax = 349;
+    const at = (dist) => {
+      const L = mp.distance_m[mp.distance_m.length - 1];
+      const dd = Math.max(0, Math.min(L, dist));
+      let i = 0; while (i < mp.distance_m.length - 2 && mp.distance_m[i + 1] < dd) i++;
+      const f = (dd - mp.distance_m[i]) / ((mp.distance_m[i + 1] - mp.distance_m[i]) || 1);
+      return [px(mp.x_m[i] + f * (mp.x_m[i + 1] - mp.x_m[i])), py(mp.y_m[i] + f * (mp.y_m[i + 1] - mp.y_m[i]))];
+    };
+    const lg = $("replay-legend");
+    lg.replaceChildren();
+    h("span", null, "0 km/h", lg);
+    const ramp = h("span", "ramp", null, lg);
+    ramp.style.background = "linear-gradient(90deg, " + stops.map((c) => "rgb(" + c.join(",") + ")").join(",") + ")";
+    h("span", null, vmax + " km/h", lg);
+
+    function status(rep, shownTime) {
+      const st = $("replay-status");
+      st.replaceChildren();
+      const pct = Math.round((100 * rep.distance_m) / view.length_m);
+      let big, small;
+      if (rep.completed) { big = rep.lap_time_s.toFixed(2) + " s"; small = "Finished the lap"; }
+      else if (rep.off_track) { big = "Off track"; small = "after " + Math.round(rep.distance_m).toLocaleString("en-US") + " m (" + pct + "% of the lap)"; }
+      else if (rep.stalled) { big = "Stopped"; small = "after " + Math.round(rep.distance_m).toLocaleString("en-US") + " m (" + pct + "% of the lap)"; }
+      else { big = "Ran out of time"; small = Math.round(rep.distance_m).toLocaleString("en-US") + " m in 200 s"; }
+      h("div", "small", "After " + rep.timesteps.toLocaleString("en-US") + " decisions of training", st);
+      h("div", "big", big, st);
+      h("div", "small", small + (shownTime !== undefined ? " · t = " + shownTime.toFixed(1) + " s" : ""), st);
+      const s = view.summary;
+      if (rep.completed && s.mean_s) {
+        const diff = rep.lap_time_s - s.mean_s;
+        h("div", "small", (diff <= 0 ? "−" : "+") + Math.abs(diff).toFixed(2) + " s vs baseline mean (" + s.mean_s.toFixed(2) + " s)", st);
+      }
+    }
+    function drawTrail(rep, upto) {
+      trail.replaceChildren();
+      const n = Math.min(upto, rep.pos_m.length);
+      for (let i = 1; i < n; i++) {
+        const [ax, ay] = at(rep.pos_m[i - 1]), [bx, by] = at(rep.pos_m[i]);
+        el("line", { x1: ax, y1: ay, x2: bx, y2: by, stroke: lerpColor(stops, rep.speed_kmh[i] / vmax), "stroke-width": 5, "stroke-linecap": "round" }, trail);
+      }
+      const last = n ? rep.pos_m[n - 1] : 0;
+      const [cx, cy] = at(last);
+      car.setAttribute("cx", cx); car.setAttribute("cy", cy);
+      const ended = n >= rep.pos_m.length;
+      if (ended && !rep.completed) {
+        const [ex, ey] = at(rep.distance_m);
+        crash.setAttribute("transform", "translate(" + ex + " " + ey + ")"); crash.setAttribute("visibility", "visible");
+      } else crash.setAttribute("visibility", "hidden");
+    }
+    function showFull(i) {
+      replayState.idx = i; slider.value = String(i);
+      const rep = reps[i];
+      drawTrail(rep, rep.pos_m.length);
+      status(rep);
+    }
+    function playLap() {
+      if (replayState.raf) { stopReplay(); showFull(replayState.idx); return; }
+      stopReplay();
+      const rep = reps[replayState.idx];
+      if (reduceMotion || !rep.time_s.length) { showFull(replayState.idx); return; }
+      $("replay-play").textContent = "Stop";
+      const speedup = 8, t0 = performance.now();
+      const tick = (now) => {
+        const t = ((now - t0) / 1000) * speedup;
+        let n = 0; while (n < rep.time_s.length && rep.time_s[n] <= t) n++;
+        drawTrail(rep, n);
+        status(rep, Math.min(t, rep.time_s[rep.time_s.length - 1]));
+        if (n >= rep.time_s.length) { replayState.raf = 0; $("replay-play").textContent = "Play lap"; showFull(replayState.idx); return; }
+        replayState.raf = requestAnimationFrame(tick);
+      };
+      replayState.raf = requestAnimationFrame(tick);
+    }
+    function playLearning() {
+      if (replayState.learnTimer) { stopReplay(); return; }
+      stopReplay();
+      $("replay-learn").textContent = "Stop";
+      let i = 0;
+      showFull(i);
+      replayState.learnTimer = setInterval(() => {
+        i += 1;
+        if (i >= reps.length) { stopReplay(); return; }
+        showFull(i);
+        markCheckpoint(reps[i].timesteps);
+      }, reduceMotion ? 1200 : 450);
+    }
+    slider.oninput = () => { stopReplay(); showFull(Number(slider.value)); markCheckpoint(reps[Number(slider.value)].timesteps); };
+    $("replay-play").onclick = playLap;
+    $("replay-learn").onclick = playLearning;
+    showFull(replayState.idx);
+  }
+  // Marks the replayed checkpoint on the evaluation lap-time chart.
+  let markCheckpoint = () => {};
+
+  function overview() {
+    const sec = $("overview");
+    const multi = DATA.filter((v) => (v.training || []).some((r) => (r.tracks || []).length > 1));
+    sec.hidden = !multi.length;
+    if (!multi.length) return;
+    const grid = $("multiples");
+    grid.replaceChildren();
+    const c1 = css("--series-1"), c3 = css("--series-3");
+    multi.forEach((view) => {
+      const run = view.training.find((r) => (r.tracks || []).length > 1);
+      const idx = DATA.indexOf(view);
+      const card = h("button", "mini", null, grid);
+      card.type = "button";
+      card.setAttribute("aria-label", "Open " + view.name);
+      const head = h("div", "mini-head", null, card);
+      h("span", "mini-name", view.name, head);
+      const laps = run.eval.mean_lap_s.filter((v) => v !== null);
+      const last = laps.length ? laps[laps.length - 1] : null;
+      const s = view.summary;
+      h("span", "mini-val", last === null ? "no finished lap yet" : last.toFixed(1) + " s · baseline " + (s.mean_s ? s.mean_s.toFixed(1) : "–") + " s", head);
+      const chart = h("div", "chart", null, card);
+      card.addEventListener("click", () => { current = idx; currentRun = run.name; try { localStorage.setItem("baseline-report-track", String(idx)); } catch (e) { /* ignore */ } render(); document.getElementById("tabs").scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth" }); });
+      requestAnimationFrame(() => lineChart(chart, { label: "Evaluation lap time on " + view.name, x: run.eval.timesteps, xFmt: kFmtG, tipHead: (v) => kFmtG(v) + " decisions", height: 130, yPad: 0.05,
+        refs: s.mean_s ? [{ value: s.mean_s, label: "baseline", color: c1 }] : [],
+        series: [{ label: "RL agent", color: c3, values: run.eval.mean_lap_s }],
+        yFmt: (v, step) => v.toFixed(decimals(step)), valueFmt: (v) => v.toFixed(2) + " s" }));
+    });
+  }
+
+  function render() {
+    const view = DATA[current];
+    document.querySelectorAll(".tab").forEach((b, i) => b.setAttribute("aria-selected", String(i === current)));
+    const cfg = view.config;
+    $("meta").textContent = view.name + " · " + (view.length_m / 1000).toFixed(3) + " km · " + cfg.episodes + " episodes · seed " + cfg.seed + " · corner grip " + Math.round(cfg.baseline.corner_grip_margin * 100) + "%, braking " + Math.round(cfg.baseline.braking_margin * 100) + "% · git " + String(view.git_sha).slice(0, 8);
+    overview();
+    tiles(view);
+    trackMap($("map"), view);
+    sectorBars($("sectors"), view);
+    const corners = view.sections.filter((s) => s.is_corner);
+    const tr = view.trace;
+    const c1 = css("--series-1"), c2 = css("--series-2"), c3 = css("--series-3");
+    const run = trainingRun(view);
+    renderTraining(view, run);
+    const agent = run && run.best_lap && run.best_lap.speed_kmh ? run.best_lap : null;
+    const speedLegend = [{ label: "Baseline, best lap", color: c1 }, { label: "Limit lap", color: c2 }];
+    if (agent) speedLegend.push({ label: "RL agent, best model", color: c3 });
+    legend($("speed-legend"), speedLegend);
+    if (tr.speed_kmh) {
+      const speedSeries = [{ label: "Baseline", color: c1, values: tr.speed_kmh }, { label: "Limit lap", color: c2, values: tr.limit_speed_kmh }];
+      if (agent) speedSeries.push({ label: "RL agent", color: c3, values: agent.speed_kmh });
+      lineChart($("speed"), { label: "Speed against lap distance", x: tr.distance_m, bands: corners, sections: view.sections, yMin: 0, height: 250,
+        series: speedSeries,
+        yFmt: (v) => v, valueFmt: (v) => v.toFixed(0) + " km/h" });
+      lineChart($("delta"), { label: "Time delta to the limit lap", x: tr.distance_m, bands: corners, sections: view.sections, yMin: 0, height: 200,
+        series: [{ label: "behind limit lap", color: c1, values: tr.delta_s, area: true }],
+        yFmt: (v, step) => v.toFixed(decimals(step)) + " s", valueFmt: (v) => "+" + v.toFixed(3) + " s", endLabel: (v) => "+" + v.toFixed(3) + " s" });
+      const throttleSeries = [{ label: "Baseline", color: c1, values: tr.throttle }];
+      if (agent) throttleSeries.push({ label: "RL agent", color: c3, values: agent.throttle });
+      legend($("throttle-legend"), throttleSeries.length > 1 ? throttleSeries.map((x) => ({ label: x.label, color: x.color })) : []);
+      lineChart($("throttle"), { label: "Throttle and brake command", x: tr.distance_m, bands: corners, sections: view.sections, yMin: -1, yMax: 1, height: 170,
+        series: throttleSeries,
+        yFmt: (v) => (v > 0 ? "+" : "") + v, valueFmt: (v) => (v >= 0 ? "+" : "") + v.toFixed(2) });
+    }
+    spread($("spread"), view);
+    lapTable($("laps"), view);
+    $("config").textContent = JSON.stringify(cfg, null, 2);
+  }
+
+  const tabs = $("tabs");
+  DATA.forEach((v, i) => {
+    const b = h("button", "tab", v.name, tabs);
+    b.type = "button"; b.id = "tab-" + i; b.setAttribute("role", "tab");
+    b.addEventListener("click", () => { current = i; try { localStorage.setItem("baseline-report-track", String(i)); } catch (e) { /* ignore */ } render(); });
+  });
+  render();
+  let raf = 0;
+  const rerender = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(render); };
+  let lastWidth = 0;
+  new ResizeObserver((entries) => {
+    const w = Math.round(entries[0].contentRect.width);
+    if (w !== lastWidth) { lastWidth = w; rerender(); }
+  }).observe(document.querySelector(".page"));
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", rerender);
+  new MutationObserver(rerender).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+})();
+</script>

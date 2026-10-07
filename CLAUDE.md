@@ -38,6 +38,8 @@ Current build plan lives in `docs/roadmap.md` — work it one phase at a time.
 - Type check: `uv run mypy src/`
 - Train driver: `uv run python -m f1rl.train --config configs/driver_ppo.yaml`
 - Evaluate vs baseline: `uv run python -m f1rl.eval --agent <path> --episodes 20`
+- Baseline driver: `uv run python -m f1rl.agents.baseline --track technical --episodes 20`
+- Report: `uv run python -m f1rl.report` (reads `runs/baseline/` + training runs, never runs a driver)
 - Dashboard: `uv run python -m f1rl.dashboard` (reads logged runs, never trains)
 
 Run `uv run ruff check`, `uv run mypy src/`, and `uv run pytest` before reporting

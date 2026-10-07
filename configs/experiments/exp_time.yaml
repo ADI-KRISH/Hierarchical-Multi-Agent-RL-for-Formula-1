@@ -1,0 +1,36 @@
+# Diagnosis experiment: time penalty 0.01 -> 0.03 per second. Result: 44.09 s (learns ~2x faster, coasts less, same plateau). See PROGRESS.md.
+# Run: uv run python -m f1rl.train --config configs/experiments/exp_time.yaml
+
+run:
+  name: driver_ppo_time003
+  seed: 0
+  track: technical          # oval | technical | <year>:<grand prix>
+  total_timesteps: 2000000  # decisions (each is action_repeat physics steps)
+  n_envs: 8
+  eval_every_steps: 50000
+  eval_episodes: 5
+  eval_seed: 10000          # held-out reset seeds, disjoint from training envs
+  torch_threads: 1
+
+sim:                        # SimParams overrides (seed comes from run.seed)
+  dt_s: 0.02
+  max_episode_steps: 4000   # 80 s: ~2x the baseline lap; faster feedback than 200 s
+
+env:                        # DriverEnvParams overrides; unset = config.py defaults
+  action_repeat: 5          # decide every 0.1 s (5 physics steps)
+  time_penalty_per_s: 0.03
+
+ppo:
+  learning_rate: 0.0003
+  n_steps: 512              # decisions per env -> 4096 samples per update
+  batch_size: 128
+  n_epochs: 10
+  gamma: 0.995              # ~20 s horizon at 10 Hz: 0.98 (5 s) learned to park
+                            # before the chicane -- too short to value the rest of the lap
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.0
+
+policy:
+  net_arch: [128, 128]
+  activation_fn: Tanh

@@ -17,6 +17,22 @@ is what makes a run reproducible from its logged config plus its seed.
 from dataclasses import dataclass
 from typing import Final
 
+#: Track width (m) where no data gives one -- FastF1 has no width channel. 12 m
+#: is the minimum width the FIA sets for new permanent circuits (FIA International
+#: Sporting Code, Appendix O), so a real track is at least this wide.
+DEFAULT_TRACK_WIDTH_M: Final = 12.0
+
+#: Mean Earth radius (m), IUGG value -- for projecting GPS circuit centerlines
+#: to local metres.
+EARTH_MEAN_RADIUS_M: Final = 6_371_008.8
+
+#: Window (m) of the moving average applied along the track to the curvature of
+#: a circuit's GPS centerline. The dataset's points are hand-digitised ~25-50 m
+#: apart, so curvature from an exact interpolating spline carries wiggles at
+#: that scale; averaging over ~one point spacing removes them while leaving a
+#: true constant-radius corner unchanged. A processing choice, not an F1 figure.
+CIRCUIT_CURVATURE_WINDOW_M: Final = 25.0
+
 # Standard acceleration of gravity, BIPM SI Brochure (9th ed.), exact by definition.
 GRAVITY_M_S2: Final = 9.80665
 
@@ -78,15 +94,94 @@ class SimParams:
 
 @dataclass(frozen=True)
 class DriverEnvParams:
-    """Tunables for `DriverEnv`'s observation/reward shaping.
+    """Tunables for `DriverEnv`'s dynamics, observation, and reward shaping.
 
     Simulation design choices, not measured F1 quantities -- see `SimParams`.
     """
 
-    lookahead_m: float = 50.0  # how far ahead the "next corner" observation looks.
-    curvature_norm_per_m: float = 0.1  # curvature (1/m) that normalizes obs to +-1.
+    # Edges (m) of the lookahead windows: the observation reports the slowest
+    # corner speed limit in 0-25 m, 25-50 m, ... ahead. The farthest must cover a
+    # full-speed stop for a slow hairpin: (97^2 - 20^2) / (2 * 5 g) ~ 92 m for
+    # `EXAMPLE_CAR`.
+    lookahead_m: tuple[float, ...] = (25.0, 50.0, 100.0, 150.0)
+    # The observation's braking margin, (safe speed - speed), is divided by this
+    # and clipped to +-1: the brake-or-not decision then turns on an input of
+    # order 1, not on the difference of two near-equal speed fractions.
+    margin_obs_scale_ms: float = 20.0
+    # Braking-point countdown in the observation: distance left before the car
+    # must brake (at its current speed) for any corner within this horizon,
+    # divided by it, clipped to [-1, 1]. The speed margin above only "wakes up"
+    # within ~2-3 decisions of the braking point at high speed; this one counts
+    # down from 300 m, like a driver's marker boards. 0 = leave it out.
+    brake_point_horizon_m: float = 0.0
     drift_gain_m_s_per_g: float = 5.0  # forced lateral drift speed per g over grip.
-    steer_gain_m_s_per_g: float = 5.0  # lateral speed per g of *unused* grip budget
-    # spent steering -- steering can only correct within whatever lateral grip the
-    # corner isn't already using, it can't out-steer physics.
+    # Steering turns the velocity vector at most this far off the track direction,
+    # as a lateral/forward speed ratio (0.1 ~ 5.7 deg) -- scaled by the fraction of
+    # lateral grip the corner leaves unused, so a stationary car can't move sideways
+    # and steering can't out-steer physics.
+    max_heading_ratio: float = 0.1
     off_track_penalty: float = 1.0  # reward subtracted, episode ends, when exceeded.
+    # Reward subtracted per simulated second. Progress pays 1.0 per lap whatever the
+    # pace, so this is what makes a faster lap score higher.
+    time_penalty_per_s: float = 0.01
+    # A second time penalty, normalised per track: a lap at that track's limit
+    # pace costs exactly this much (per-second rate = this / limit lap time).
+    # Unlike a fixed per-second rate, it means the same thing on a 60 s and a
+    # 95 s circuit, and while it is below 1 + off_track_penalty, going off early
+    # can never score better than finishing.
+    time_penalty_per_limit_lap: float = 0.0
+    # Reward subtracted per second the car is past a braking point (faster than
+    # `max_safe_speed_ms`), scaled by the overspeed as a fraction of top speed.
+    # Graded, so braking a little earlier always scores a little better -- the
+    # off-track penalty alone is a cliff with no gradient toward braking.
+    overspeed_penalty_per_s: float = 1.0
+    # Reward per second for using the speed available: min(v, v_safe) / v_safe.
+    # Makes running below the safe speed an immediate cost, instead of a tiny
+    # long-run one (lifting 100 m early costs ~0.003 of progress/time reward,
+    # lost among off-track and overspeed penalties of ~1). 0 = off.
+    speed_use_reward_per_s: float = 0.0
+    # A car slower than `stall_speed_ms` for `stall_timeout_s` has stopped on
+    # track: the episode ends like an off-track (same penalty). Without this,
+    # parking before a hard corner is a risk-free way to dodge the off-track
+    # penalty, and agents learn to do exactly that.
+    stall_speed_ms: float = 2.0
+    stall_timeout_s: float = 3.0
+    # Physics steps each action is held for. 1 = a decision every `dt_s`; 5 = every
+    # 0.1 s, which makes exploration correlated in time and episodes 5x shorter.
+    action_repeat: int = 1
+    # Reset draws the starting lateral offset uniformly from [0, this], from the
+    # env's seeded RNG -- so episodes differ but stay reproducible.
+    start_offset_max_m: float = 1.0
+
+
+@dataclass(frozen=True)
+class BaselineParams:
+    """Tunables for the rule-based baseline driver (phase 3).
+
+    Design choices for a scripted driver, not measured F1 quantities.
+    """
+
+    # A cautious scripted driver, not an optimal one: it plans corner speeds for
+    # this fraction of the car's lateral grip...
+    corner_grip_margin: float = 0.90
+    # ...and places its braking points as if the car could only brake at this
+    # fraction of its real capacity, so it brakes early.
+    braking_margin: float = 0.80
+    # Each episode the driver's margins are jittered by Gaussian noise of this
+    # std-dev, kept within [margin_floor, 1.0] (1.0 is the car's real limit):
+    # lap-to-lap confidence varies, which is what makes 20 runs differ. Drawn
+    # from the driver's seeded RNG.
+    margin_jitter_std: float = 0.02
+    margin_floor: float = 0.5  # jittered margins never drop below this.
+
+
+@dataclass(frozen=True)
+class AnalyticsParams:
+    """How lap analytics split a lap and sample telemetry -- reporting choices."""
+
+    # Tighter than this (radius under 500 m) counts as a corner...
+    corner_curvature_per_m: float = 0.002
+    # ...unless shorter than this: real-circuit curvature has short noise kinks.
+    min_corner_m: float = 10.0
+    telemetry_every_n_steps: int = 5  # 10 Hz telemetry at the 50 Hz control loop.
+    map_step_m: float = 5.0  # spacing of the reconstructed track-map points.

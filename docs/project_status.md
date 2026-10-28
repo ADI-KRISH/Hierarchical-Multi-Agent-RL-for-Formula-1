@@ -172,3 +172,34 @@ layer (+3.1% vs the ~1% goal), the 5 off-tracks when defending, the defend scena
 - [ ] Non-RL baseline strategy (rule-based or dynamic programming).
 - [ ] MaskablePPO Strategy Agent, once per lap, sending a mode vector to the driver.
 - [ ] Stage 3 (optional): joint fine-tuning.
+
+### Overtake v4: fix the world first (2026-10-28, branch `claude/project-thread-j9b4o6`)
+Review: the scripted tactician passed 0/36 validation battles (pass must hold 1 km), so RL had
+no pass to find. Causes and fixes (`configs/tactical_v4.yaml`, flags in `RaceEnvParams`):
+- The shield braked the car behind at 80% inside 12 m + 1 s of closing, even in the tow:
+  now lifted in the tow (`shield_in_tow: false`) and it only matches speed (`soft_follow`).
+- No drag, so the tow only raised top speed: `tow_accel_gain 0.3` adds acceleration.
+- The wake was planned for from 75 m back: `wake_anticipation_m 25`.
+- Scripted cars braked and jumped aside when a car came alongside (rivals never did):
+  `opponent_yield: false`.
+- Off-tracks of 0.2-0.5 m when racing close: `path_edge_inset_m 0.6`, `track_limit_margin_m 0.5`.
+- Moves were replaced every 0.5 s: `commit_moves`. New opponent observations; reward
+  normalisation; 12 env processes (`subproc`).
+Tried and dropped (worse): re-planning after a swerve, holding a lane when alongside, an
+overlap rule in the safety filter.
+
+Pass gate (`scripts/pass_gate.py`, scripted tactician, 9 tracks x 4 starts, 20 m gap):
+
+| battle | old world | v4 world |
+|---|---|---|
+| attack slower car | ~8/36 | 25/36 |
+| attack equal / covering car | 2/72 | 14/72 |
+| defend vs equal / quicker car | ~51/72 | 49/72 |
+| contacts | 1 | 2 (of 180) |
+
+PPO run `tactical_v4` (laptop, Desktop\RL_v4): behaviour cloning 95.9% then PPO; stopped at
+300k decisions (43-60 decisions/s, the full 1.5M would have taken ~8 h). Validation eval:
+start 52.5% (2 contacts, real attack 4/22, defend 16/18); 100k 41.0%; 200k 42.6% (0 contacts,
+`model_best.zip`); 300k 49.2% (1 contact, attack 7/22, defend 11/18). Attacking was improving,
+defending fell. Next: continue from the 300k weights with a defend-specific bonus and more
+defend starts, or a longer run overnight.

@@ -1,0 +1,49 @@
+# TACTICAL driver: PPO picks a race-craft move (line, outside, divebomb, dummy,
+# switchback, cover, inside) every 0.5 s and a scripted path driver executes it at the
+# pace set by push level, tyre wear and the wake. It first imitates the rule-based
+# tactician (behaviour cloning), then PPO improves on it. Per episode the env draws a
+# push level, tyre wear and (usually) an opponent: backmarker, slow, equal, defender or
+# a quicker attacker behind. Scenario laps on the validation tracks pick the checkpoint.
+# Tyre / wake / assist constants are design choices (config.py), not F1 figures.
+tactical: true
+
+run:
+  name: tactical
+  seed: 0
+  total_timesteps: 1500000   # decisions of 0.5 s, summed over all envs
+  n_envs: 8
+  eval_every_steps: 50000
+  torch_threads: 3
+  bc_decisions: 60000
+  bc_epochs: 15
+
+sim:
+  dt_s: 0.02
+  max_episode_steps: 10000
+
+env:
+  action_repeat: 5
+  reference_features: true
+  tactical: true
+  tires: true
+  wear_cost_per_unit: 3000.0
+  opponents: [none, backmarker, slow, equal, defender, attacker]
+  overtake_bonus: 20.0
+  lookahead_windows_m: [10, 20, 30, 40, 50, 60, 80, 100, 125, 150, 200, 250]
+  progress_scale_m: 10.0
+  fail_penalty: 50.0
+  episode_s: 60.0
+
+ppo:
+  learning_rate: 0.0003
+  n_steps: 256
+  batch_size: 512
+  n_epochs: 6
+  gamma: 0.99
+  gae_lambda: 0.95
+  ent_coef: 0.01
+  clip_range: 0.2
+
+policy:
+  net_arch: [256, 256]
+  activation_fn: ReLU

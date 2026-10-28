@@ -33,6 +33,11 @@ EARTH_MEAN_RADIUS_M: Final = 6_371_008.8
 #: true constant-radius corner unchanged. A processing choice, not an F1 figure.
 CIRCUIT_CURVATURE_WINDOW_M: Final = 25.0
 
+#: Stations over which a racing line's curvature is averaged before the limit-speed
+#: profile is built from it (odd, so the average is centred). Removes point-to-point
+#: noise from a polyline; any longer flattens real apex peaks and flatters the lap.
+LINE_CURVATURE_WINDOW_STATIONS: Final = 3
+
 # Standard acceleration of gravity, BIPM SI Brochure (9th ed.), exact by definition.
 GRAVITY_M_S2: Final = 9.80665
 
@@ -185,3 +190,229 @@ class AnalyticsParams:
     min_corner_m: float = 10.0
     telemetry_every_n_steps: int = 5  # 10 Hz telemetry at the 50 Hz control loop.
     map_step_m: float = 5.0  # spacing of the reconstructed track-map points.
+
+
+@dataclass(frozen=True)
+class RaceEnvParams:
+    """Tunables for `RaceEnv` (env v2: the car steers, so it chooses its line).
+
+    Simulation design choices, not measured F1 quantities -- see `SimParams`.
+    """
+
+    # The car's centre must stay this far inside either edge. Half of 2.0 m, the
+    # maximum overall car width in the FIA Formula One Technical Regulations.
+    car_half_width_m: float = 1.0
+    # Extra gap the optimal-line reference keeps from the edge, so the reference
+    # is a line the env can actually drive without touching its own limit.
+    line_safety_m: float = 0.75
+    # Physics steps each action is held for (5 at 50 Hz = a decision every 0.1 s).
+    action_repeat: int = 5
+    # Training episodes run for this long and are then truncated (not terminated):
+    # reward is distance covered, so a fixed time budget IS "go as fast as you can".
+    episode_s: float = 40.0
+    # Random starts (training): anywhere on the lap, this speed range, and a
+    # lateral offset up to this fraction of the free half-width either side.
+    start_speed_ms: tuple[float, float] = (20.0, 60.0)
+    start_offset_frac: float = 0.6
+    start_heading_rad: float = 0.1
+    # Fail (episode ends, `fail_penalty`) below this speed -- a stopped car is
+    # retired -- or when pointing this far off the direction of travel.
+    min_speed_ms: float = 10.0
+    max_heading_rad: float = 1.5
+    # Reward: distance advanced along the track / this, so one decision at
+    # 80 m/s pays 0.08.
+    progress_scale_m: float = 100.0
+    fail_penalty: float = 5.0
+    # Observation geometry. Windows (m ahead, from 0): the tightest corner in each
+    # becomes one signed feature; edge points: where the edges lie that far ahead.
+    lookahead_windows_m: tuple[float, ...] = (10.0, 25.0, 50.0, 100.0, 150.0, 250.0)
+    edge_points_m: tuple[float, ...] = (25.0, 50.0, 100.0, 150.0)
+    edge_scale_m: float = 10.0  # edge distances are divided by this
+    # Hybrid mode: also observe the optimal line -- its lateral shift (relative to the
+    # car) and limit speed at each of `reference_points_m` ahead, and the heading
+    # error to it. Off = the driver must find the line from the track alone.
+    reference_features: bool = False
+    reference_points_m: tuple[float, ...] = (0.0, 25.0, 50.0, 100.0, 200.0)
+    # Driving-style hooks (Phase 8, unused): a 0 (smooth) .. 1 (attacking) input
+    # held in the observation, and a reward term on change of the commands.
+    style: float = 0.5
+    smooth_penalty: float = 0.0
+    # Residual mode: the scripted `LineFollower` drives, and the policy's action is a
+    # correction of at most this size (per unit command) added to the follower's
+    # command. The policy also sees the follower's command. 0 = the policy drives.
+    # Starts every run at the follower's pace (+2%) instead of at a random driver.
+    residual_scale: float = 0.0
+    # Tyres and driving mode (`models.tire`). A per-episode ``push`` in [0, 1] (0 =
+    # conserve, 1 = attack) and the tyre ``wear`` are in the observation. Push sets
+    # how much of the grip the base driver plans for (``conserve_grip_fraction`` at
+    # 0 up to the follower's own at 1, in ``push_levels`` steps), and the reward pays
+    # ``(1 - push) * wear_cost_per_unit`` per unit of wear -- how much a worn tyre is
+    # worth to the strategist. Worn tyres give less grip (`TireParams`).
+    tires: bool = False
+    # Tactical env (`envs.tactical_env`): the action picks a race-craft move and a
+    # scripted path driver executes it. Needs a reference line.
+    tactical: bool = False
+    push_levels: tuple[float, ...] = (0.0, 0.25, 0.5, 0.75, 1.0)
+    conserve_grip_fraction: float = 0.85
+    wear_cost_per_unit: float = 0.0
+    start_wear_max: float = 0.7
+    # Other cars (`envs.opponents`): kinds sampled one per episode, from
+    # `OPPONENT_KINDS`. Empty = a solo car. The opponent starts this far
+    # (min, max in m) ahead of or behind the car, depending on its kind.
+    opponents: tuple[str, ...] = ()
+    opponent_gap_m: tuple[float, float] = (15.0, 60.0)
+    # Contact ends the episode (`fail_penalty`) when the cars overlap by less than
+    # these: a car length and width. Length: FIA Technical Regulations fix the
+    # wheelbase at 3.6 m max (2022+); 5.5 m overall is the usual reported length.
+    # Width: the 2.0 m maximum overall width, as for `car_half_width_m`.
+    car_length_m: float = 5.5
+    car_width_m: float = 2.0
+    # An opponent counts a car as alongside within a car length plus this.
+    alongside_margin_m: float = 4.0
+    # Dirty air: within this distance behind another car (and lined up with it), all
+    # grip limits are scaled by (1 - dirty_air_loss). A design choice, not a measured
+    # figure: it is what makes following close in corners cost something.
+    dirty_air_m: float = 25.0
+    dirty_air_loss: float = 0.04
+    # Overtake assist (DRS plus slipstream): on a straight (centreline curvature under
+    # `tow_max_curvature`), a car within `tow_m` behind another gets `tow_boost_ms` of
+    # extra top speed whatever its sideways position. 6 m/s (~20 km/h) is the scale of
+    # the reported DRS gain (~10-15 km/h) plus tow; a design choice. Without a speed
+    # edge on the straight a car on the racing line can never be caught, and no
+    # overtake exists.
+    tow_m: float = 80.0
+    tow_max_curvature: float = 0.002
+    tow_boost_ms: float = 6.0
+    # The base driver plans its speeds for the wake from this far behind a car.
+    wake_anticipation_m: float = 75.0
+    # Reward paid (lost) when the car passes (is passed by) an opponent.
+    overtake_bonus: float = 20.0
+    # ...but only once the pass has stuck: the new order held for this many metres
+    # of driving (0 = paid the moment the order changes). ~1 km is about 3 corners.
+    pass_hold_m: float = 0.0
+    # GT Sophy-style passing reward (Wurman et al., Nature 2022): reward per metre
+    # gained on (lost to) the opponent while it is within (behind, ahead) metres.
+    # The window is the paper's b = 20, f = 40. 0 = off.
+    pass_reward_per_m: float = 0.0
+    pass_window_m: tuple[float, float] = (20.0, 40.0)
+    # Reward lost each time the no-crash filter has to change our command.
+    intervention_penalty: float = 0.0
+    # No-crash safety filter (`models.safety`) on BOTH cars. A command is kept only
+    # if, after it, both cars could still fall back on the rules of the road (keep
+    # the lane; the car behind brakes) without coming within a car length +
+    # `safety_margin_s_m` and a car width + `safety_margin_n_m`, checked
+    # `safety_horizon_s` ahead (longer for a car closing fast, up to
+    # `safety_max_horizon_s`) in `safety_dt_s` steps. Otherwise the least intrusive
+    # safe command replaces it (brake and/or steer away by `safety_steer`). Checked
+    # only within `safety_check_m` of each other, to keep training fast. Off by
+    # default so earlier runs reproduce; every new config turns it on. Design
+    # choices, not F1 figures.
+    safety_filter: bool = False
+    safety_horizon_s: float = 2.5  # was 1.5; 1.5 s missed side-by-side corner entries
+    safety_max_horizon_s: float = 3.0
+    safety_dt_s: float = 0.05
+    # After its command, a car is assumed to straighten up to the track this fast (s).
+    safety_lane_time_s: float = 0.5
+    safety_margin_s_m: float = 1.0
+    safety_margin_n_m: float = 0.3
+    safety_check_m: float = 80.0
+    safety_steer: float = 0.8  # was 0.4: too little to turn away from full lock
+    safety_brake: float = 0.8
+    # Real starts (`f1rl.real_starts`): a gap given in seconds is turned into metres
+    # at the racing line's speed where the scenario starts, then kept in this range
+    # (a car length plus a little, up to where the tactician starts an attack).
+    real_gap_m: tuple[float, float] = (8.0, 60.0)
+
+
+@dataclass(frozen=True)
+class FollowerParams:
+    """Tunables for the scripted optimal-line follower (`agents.line_follower`)."""
+
+    # How long each action is held (SimParams.dt_s * RaceEnvParams.action_repeat).
+    decision_s: float = 0.1
+    # Lateral tracking is a PD law on the offset and heading error with this natural
+    # frequency (rad/s) and damping ratio.
+    bandwidth_rad_s: float = 5.0
+    damping: float = 1.0
+    # Target speeds come from a car with this fraction of the real grip on every
+    # axis, so the tracking loop always has grip left to steer back onto the line.
+    grip_fraction: float = 0.95
+    # ...but braking is planned for this fraction of the brake limit if set (None = the
+    # same as `grip_fraction`): braking earlier costs little time, and it is where
+    # steering and braking compete for the same grip.
+    braking_fraction: float | None = None
+    # The speed controller aims to close the gap to the target speed in this long.
+    speed_time_constant_s: float = 0.25
+
+
+@dataclass(frozen=True)
+class TireParams:
+    """Tyre wear and grip (`models.tire`). **Simulation design choices, uncalibrated**:
+    no FastF1/Pirelli fit has been done, so none of these is an F1 figure. They are
+    set so the trade-off exists -- wear grows with the square of how hard the tyres
+    are worked, and worn tyres give less grip -- not to match a compound. Replace
+    with calibrated values (docs/context.md) before reading any result as F1.
+    """
+
+    # Seconds a tyre lasts if worked at the full friction limit the whole time
+    # (wear reaches 1.0). Wear per second is `(usage ** wear_exponent) / life_s`.
+    life_s: float = 1500.0
+    wear_exponent: float = 2.0
+    # Grip multiplier = 1 - loss_linear * wear - loss_cliff * wear ** cliff_power:
+    # a steady fade plus a late cliff.
+    loss_linear: float = 0.10
+    loss_cliff: float = 0.15
+    cliff_power: float = 6.0
+
+
+#: Scripted opponent kinds (`envs.opponents`): (grip fraction its path driver plans
+#: for, where it starts relative to the car). The car's own base driver plans for
+#: 0.95; lap speed goes roughly with the square root of grip, and a car must be about
+#: 10-15% quicker through the corners to be able to pass on pace, because every
+#: race-craft move costs time (measured with the scripted `tactician`: a 0.70 car is
+#: passed 7 times in 8, a 0.82 one almost never). Design choices for training
+#: scenarios, not F1 figures.
+OPPONENT_KINDS: Final = {
+    "backmarker": (0.70, "ahead"),  # lapped traffic: clearly slower, to be passed
+    "slow": (0.80, "ahead"),  # about 8% slower through corners
+    "equal": (0.95, "ahead"),  # same pace: a real battle
+    "defender": (0.95, "ahead"),  # same pace, covers and defends the inside
+    "attacker": (0.97, "behind"),  # a touch quicker; tries to pass the car
+    # Self-play: the same pace as the learner (`FollowerParams.grip_fraction`), its
+    # moves picked by a copy of a learned policy (`TacticalEnv.rival`).
+    "rival_ahead": (0.95, "ahead"),
+    "rival_behind": (0.95, "behind"),
+}
+
+
+@dataclass(frozen=True)
+class IncidentParams:
+    """How `f1rl.incidents` finds real passes and defences in FastF1 race laps."""
+
+    # A defence is the car behind staying within this gap (s) at the line. 1.0 s is
+    # the DRS detection gap in the FIA F1 Sporting Regulations (2018-2025 seasons),
+    # so it marks a car close enough to attack.
+    attack_gap_s: float = 1.0
+    # ...for at least this many laps in a row. A processing choice, not an F1 figure.
+    min_defence_laps: int = 3
+    # FastF1 `TrackStatus` codes a lap may contain and still count as clean racing.
+    # "1" is track clear; 2 yellow, 4 safety car, 5 red, 6/7 virtual safety car
+    # (FastF1 docs, `fastf1.api.track_status_data`). Yellow laps are left out too.
+    clean_track_status: str = "1"
+
+
+@dataclass(frozen=True)
+class RealStartParams:
+    """How `f1rl.real_starts` turns real passes and defences into sim scenarios.
+
+    Processing choices, not F1 figures.
+    """
+
+    # A pass scenario starts this far (m) before where the real pass happened, so the
+    # car has the road in front of it to set the move up (the place where the order
+    # flipped is usually a braking zone).
+    lead_m: float = 400.0
+    # The car being passed counts as clearly slower ("slow" opponent) when its tyres
+    # are this many laps older than the attacker's; otherwise it is an equal-pace
+    # "defender". (Fresh-tyre deltas are why most real passes happen.)
+    fresh_tyre_laps: float = 8.0

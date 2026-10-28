@@ -1,0 +1,189 @@
+"""`TacticalEnv`: `RaceEnv` where the action picks a race-craft move.
+
+Every ``option_steps`` decisions (0.5 s) the agent chooses one of `tactics.MOVES`
+(line, outside, divebomb, dummy, switchback, cover, inside); a scripted `PathDriver`
+then drives that move at the pace set by push level, tyre wear and the wake. So the
+agent learns WHEN to attack or defend and WHICH move, not how to steer.
+
+Rules of the road enforced here: a move already running is only replaced outside the
+braking zone, and a ``cover`` is a single move (no weaving) -- switching straight
+back is refused until the car behind has been clear for a while.
+"""
+
+from collections.abc import Callable
+from typing import Any
+
+import gymnasium as gym
+import numpy as np
+from numpy.typing import NDArray
+
+from f1rl.agents.path_driver import PathDriver
+from f1rl.agents.tactics import MOVES, corners_ahead, make_move
+from f1rl.config import CarParams, RaceEnvParams, SimParams
+from f1rl.envs.opponents import (
+    FOLLOW_GAP_M,
+    NO_MOVE_BRAKE_M,
+    YIELD_BRAKE,
+    wrap_gap,
+)
+from f1rl.envs.race_env import ObsType, RaceEnv
+from f1rl.envs.racetrack import RaceTrack
+from f1rl.models.maneuver import Maneuver
+from f1rl.models.raceline import OptimalLine
+
+
+class TacticalEnv(RaceEnv):
+    def __init__(
+        self,
+        car: CarParams,
+        track: RaceTrack,
+        sim: SimParams,
+        params: RaceEnvParams | None = None,
+        reference: OptimalLine | None = None,
+        mode: str = "random",
+        option_steps: int = 5,
+    ) -> None:
+        params = params or RaceEnvParams(tactical=True)
+        if not params.tactical:
+            raise ValueError("TacticalEnv needs RaceEnvParams(tactical=True)")
+        super().__init__(car, track, sim, params, reference, mode)
+        self.option_steps = option_steps
+        self.action_space = gym.spaces.Discrete(len(MOVES))
+        n = self.observation_space.shape[0]  # type: ignore[index]
+        self.observation_space = gym.spaces.Box(
+            -5.0, 5.0, (n + len(MOVES) + 2,), np.float32
+        )
+        self._move = "line"
+        self._maneuver: Maneuver | None = None
+        self.refused = 0  # moves refused by the rules, this episode
+        # Self-play: picks the moves of a ``rival_*`` opponent from that car's own
+        # view of the race (same observation layout as ours). None = scripted.
+        self.rival: Callable[[ObsType], int] | None = None
+        self._opp_move = "line"
+
+    def reset(
+        self, *, seed: int | None = None, options: dict[str, Any] | None = None
+    ) -> tuple[ObsType, dict[str, Any]]:
+        _, info = super().reset(seed=seed, options=options)
+        self._move, self._maneuver, self.refused = "line", None, 0
+        self._opp_move = "line"
+        return self._tactical_obs(), info
+
+    def _driver(self) -> PathDriver:
+        d = self._follower()
+        assert isinstance(d, PathDriver)
+        return d
+
+    def _tactical_obs(self) -> ObsType:
+        d = self._driver()
+        corners = corners_ahead(d, self._state.s_m)
+        brake = min(corners[0].brake_m, 300.0) / 300.0 if corners else 1.0
+        side = corners[0].side if corners else 0.0
+        hot = np.zeros(len(MOVES), dtype=np.float32)
+        hot[MOVES.index(self._move)] = 1.0
+        return np.concatenate(
+            [self._observation(), hot, np.array([brake, side], dtype=np.float32)]
+        ).astype(np.float32)
+
+    def _shield(self, a: NDArray[np.float32]) -> NDArray[np.float32]:
+        """Safety under every move: brake rather than run into a car ahead on the same
+        piece of track (the driver is a racer, not a bulldozer)."""
+        opp = self._opp
+        if opp is None:
+            return a
+        gap = wrap_gap(opp.state.s_m - self._state.s_m, self._lap_m)
+        closing = max(0.0, self._state.speed_ms - opp.state.speed_ms)
+        lined = abs(opp.state.n_m - self._state.n_m) < self.params.car_width_m + 0.3
+        if lined and 0.0 < gap < FOLLOW_GAP_M + closing:
+            a = a.copy()
+            a[0] = min(a[0], -YIELD_BRAKE)
+        return a
+
+    def _may_change(self, corners: list[Any]) -> bool:
+        """Free to start a new move: not in a braking zone, none in progress."""
+        in_zone = bool(corners) and corners[0].brake_m < NO_MOVE_BRAKE_M
+        running = self._maneuver is not None and self._state.s_m < self._maneuver.end_s
+        return not in_zone and not (running and self._move == "cover")
+
+    def rival_observation(self) -> ObsType:
+        """What the opponent car sees: our observation with the two cars swapped."""
+        opp = self._opp
+        assert opp is not None
+        mine = (self._state, self._last, self._move, self._tow_now)
+        self._state, opp.state = opp.state, self._state
+        self._last, self._move = self._opp_last, self._opp_move
+        self._tow_now = self._tow(self._state, opp.state)
+        try:
+            return self._tactical_obs()
+        finally:
+            opp.state, self._state = self._state, mine[0]
+            self._last, self._move, self._tow_now = mine[1], mine[2], mine[3]
+
+    def _rival_move(self) -> None:
+        """Self-play: the rival policy picks the opponent's move, under the same rules
+        as ours (no new move in a braking zone, a cover is a single move)."""
+        opp = self._opp
+        if self.rival is None or opp is None or not opp.kind.startswith("rival"):
+            return
+        want = MOVES[int(self.rival(self.rival_observation()))]
+        s = opp.state.s_m
+        running = opp.maneuver is not None and s < opp.maneuver.end_s
+        if want == self._opp_move and running:
+            return
+        corners = corners_ahead(opp.driver, s)
+        in_zone = bool(corners) and corners[0].brake_m < NO_MOVE_BRAKE_M
+        if running and (in_zone or self._opp_move == "cover"):
+            return
+        shift = opp.state.n_m - opp.driver.base.line_state(s)[0]
+        threat = 0.0
+        if wrap_gap(self._state.s_m - s, self._lap_m) < 0:  # we are behind it
+            threat = self._state.n_m - opp.driver.base.line_state(self._state.s_m)[0]
+        opp.maneuver = make_move(want, opp.driver, s, shift, threat_shift=threat)
+        self._opp_move = want
+
+    def step(self, action: Any) -> tuple[ObsType, float, bool, bool, dict[str, Any]]:
+        self._rival_move()
+        want = MOVES[int(action)]
+        d = self._driver()
+        s = self._state.s_m
+        corners = corners_ahead(d, s)
+        if want != self._move or self._maneuver is None or s > self._maneuver.end_s:
+            if self._may_change(corners) or self._maneuver is None:
+                shift = self._state.n_m - d.base.line_state(s)[0]
+                threat = 0.0
+                if self._opp is not None:
+                    threat = (
+                        self._opp.state.n_m - d.base.line_state(self._opp.state.s_m)[0]
+                    )
+                if (
+                    self._opp is not None
+                    and wrap_gap(self._opp.state.s_m - s, self._lap_m) >= 0
+                ):
+                    threat = 0.0  # nobody behind to cover
+                self._maneuver = make_move(want, d, s, shift, threat_shift=threat)
+                self._move = want
+            else:
+                self.refused += 1
+        total = 0.0
+        terminated = truncated = False
+        info: dict[str, Any] = {}
+        for _ in range(self.option_steps):
+            d = self._driver()  # grip (tyres, wake) may have moved the plan
+            assert self._maneuver is not None
+            a: NDArray[np.float32] = d.act(
+                {
+                    "distance_m": self._state.s_m,
+                    "lateral_offset_m": self._state.n_m,
+                    "heading_rad": self._state.psi_rad,
+                    "speed_ms": self._state.speed_ms,
+                },
+                self._maneuver,
+                self._tow_now,
+            )
+            _, r, terminated, truncated, info = super().step(self._shield(a))
+            total += r
+            if terminated or truncated:
+                break
+        info["move"] = self._move
+        info["refused"] = self.refused
+        return self._tactical_obs(), total, terminated, truncated, info

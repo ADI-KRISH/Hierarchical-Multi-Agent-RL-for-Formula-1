@@ -151,6 +151,44 @@ current gap to the baseline. The doc lays out a plan: TUM's tracks with real wid
 a minimum-curvature optimal reference, Frenet-frame steering (env v2), and AM-RL-style
 action mapping, random starts and SAC/TD3 trained across tracks with held-out tests.
 
+
+### Phase 4R: racing line on many tracks (2026-10-07)
+
+Built 4R.1-4R.5 (not committed yet). The car now steers and picks its own line.
+
+- **4R.1** `envs/racetrack.py`: all 25 TUM tracks with real left/right widths, pinned
+  commit, cached in `data/tum/`. Splits: 17 train, 3 validation (pick the checkpoint),
+  5 held-out (Suzuka, Spa, Sao Paulo, Silverstone, Yas Marina; never trained on).
+- **4R.2** `models/raceline.py`: minimum-curvature line (bounded least squares, ~1 s per
+  track) and a friction-ellipse lap sim. Racing line is **9.4% faster than the
+  centreline** on average in the same physics. Against TUM's own published lines it is
+  0.98% off on average at zero margin (worst +3.3%); not the ~1% on every track the
+  roadmap hoped for. A hairpin guard stops it hugging the inside to an impossible radius.
+- **4R.3** `models/frenet.py`, `envs/race_env.py`: Frenet-frame car, one shared friction
+  ellipse, midpoint integration. Scripted `LineFollower` laps **all 25 tracks, mean
+  +2.5% (worst +3.3%) over the optimal-line limit** at 10 Hz; it needs 5% grip reserve
+  because actions are held 0.1 s, so "within ~1%" was not reachable.
+- **4R.4-4R.5** `agents/racer.py`, `configs/racer_sac.yaml`: SAC, action mapping onto the
+  grip limit, generic lookahead observation, random starts, distance-advanced reward.
+- `f1rl.eval --agent <model.zip> --tracks tum_held_out` scores the agent against the
+  optimal line, the scripted follower and the v1 baseline.
+
+**Result (`racer_sac`, 2M decisions, best checkpoint, held-out tracks):** completes 4/5
+and is about **19% slower than the optimal line** on those (Suzuka +18.6%, Spa +20.1%,
+Sao Paulo +18.3%, Silverstone +19.8%, Yas Marina did not finish). The v1 centreline
+baseline is +12-19% on the same tracks (standing start), so the agent does **not** clearly
+beat it. The scripted follower shows +2-3% is reachable.
+
+What was tried (all 1-2M decisions, same seed): finer lookahead and x10 reward scale
+helped early learning; learning-rate decay did not remove the plateau; 25 Hz control,
+demonstration pre-fill and a lower fail penalty did not help; giving the agent the
+optimal line (`racer_hybrid`) plateaued at the same ~18-20%. Training episodes fail only
+2-5% of the time yet average ~14% below the line's speed: the agent has settled on a
+cautious optimum, as the PPO driver did.
+
+Not compared: real-world lap records. The sim car has no drag and 5 g at every speed,
+so it is 10-15% quicker than a real car; a record comparison would measure the sim.
+
 ## Left
 
 | Phase | What | State |

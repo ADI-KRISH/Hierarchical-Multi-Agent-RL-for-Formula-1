@@ -35,7 +35,7 @@ import yaml
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.logger import configure
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 
 from f1rl.agents.ppo import git_sha
 from f1rl.agents.racer import prepare_tracks, resolve_track_names
@@ -84,6 +84,10 @@ class TacticalRun:
     # value function. Observations are left as they are, so saved models still run
     # on the raw env.
     normalize_reward: bool = False
+    # Step the training envs in their own processes (SB3 SubprocVecEnv) so a run
+    # uses several cores. Self-play needs the envs in this process (the rival pool
+    # lives here), so subproc runs must set rival_frac 0.
+    subproc: bool = False
 
 
 @dataclass(frozen=True)
@@ -453,7 +457,12 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
 
         return _make
 
-    vec_env: Any = DummyVecEnv([make_multi(i) for i in range(run.n_envs)])
+    if run.subproc and run.rival_frac > 0:
+        raise ValueError("subproc envs cannot share the self-play pool: rival_frac 0")
+    fns: list[Callable[[], gym.Env[Any, Any]]] = [
+        make_multi(i) for i in range(run.n_envs)
+    ]
+    vec_env: Any = SubprocVecEnv(fns) if run.subproc else DummyVecEnv(fns)
     if run.normalize_reward:
         vec_env = VecNormalize(
             vec_env,

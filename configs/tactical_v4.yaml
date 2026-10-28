@@ -26,14 +26,15 @@
 # - curriculum: start 10-35 m from the other car (was 15-60), real gaps 8-40 m (was
 #   8-60); slower and equal cars to pass, equal and quicker cars to hold off.
 # - fresh start: behaviour cloning of the tactician in the fixed world, then PPO with
-#   reward normalisation; self-play rivals join once the pool has a few policies.
+#   reward normalisation; scripted opponents only (no scripted yield any more), 12
+#   env processes for speed. Self-play can follow from this model.
 tactical: true
 
 run:
   name: tactical_v4
   seed: 0
   total_timesteps: 1500000   # agent decisions (a committed move is one decision)
-  n_envs: 8
+  n_envs: 12
   eval_every_steps: 100000
   torch_threads: 2
   bc_decisions: 60000
@@ -41,10 +42,11 @@ run:
   real_start_frac: 0.5
   incident_dir: data/incidents
   real_eval_per_track: 20
-  rival_frac: 0.25
+  rival_frac: 0.0   # self-play needs in-process envs; this run uses 12 processes
   pool_every_steps: 150000
   pool_size: 8
   normalize_reward: true
+  subproc: true
 
 sim:
   dt_s: 0.02

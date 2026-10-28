@@ -164,6 +164,8 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             if unknown:
                 raise ValueError(f"unknown opponent kinds: {sorted(unknown)}")
             n_obs += 4
+            if p.opponent_features:
+                n_obs += 4
         self.action_space = gym.spaces.Box(-1.0, 1.0, shape=(2,), dtype=np.float32)
         self.observation_space = gym.spaces.Box(
             -5.0, 5.0, shape=(n_obs,), dtype=np.float32
@@ -196,6 +198,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                     np.array(self._room_left),
                     np.array(self._room_right),
                     fp,
+                    edge_inset_m=p.path_edge_inset_m,
                 )
             else:
                 self._followers[key] = LineFollower(
@@ -282,7 +285,9 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             self.car,
             max_speed_ms=self.car.max_speed_ms + self._tow_now,
             max_lateral_g=self.car.max_lateral_g * g,
-            max_accel_g=self.car.max_accel_g * g,
+            max_accel_g=self.car.max_accel_g
+            * g
+            * (1.0 + (p.tow_accel_gain if self._tow_now > 0 else 0.0)),
             max_braking_g=self.car.max_braking_g * g,
         )
 
@@ -457,6 +462,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                     np.array(self._room_left),
                     np.array(self._room_right),
                     FollowerParams(grip_fraction=grip),
+                    edge_inset_m=p.path_edge_inset_m,
                 )
                 self._opp_drivers[kind] = driver
             side = float(self.np_random.choice([-1.0, 1.0]))
@@ -489,8 +495,16 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                 p.car_length_m + p.alongside_margin_m,
                 p.car_width_m + 1.0,
                 opp_tow,
+                shield=p.follow_shield and (p.shield_in_tow or opp_tow == 0.0),
+                give_way=p.opponent_yield,
+                soft_follow=p.soft_follow,
             )
-            opp_car = replace(self.car, max_speed_ms=self.car.max_speed_ms + opp_tow)
+            opp_car = replace(
+                self.car,
+                max_speed_ms=self.car.max_speed_ms + opp_tow,
+                max_accel_g=self.car.max_accel_g
+                * (1.0 + (p.tow_accel_gain if opp_tow > 0 else 0.0)),
+            )
             opp_cmd = (float(opp_action[0]), float(opp_action[1]))
             close = (
                 abs(wrap_gap(opp.state.s_m - self._state.s_m, self._lap_m))
@@ -536,10 +550,11 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                     terminated = True
                     break
             total += (now.s_m - before.s_m) / p.progress_scale_m
+            limit = p.track_limit_margin_m
             off_track = not (
-                -self._at(self._room_right, now.s_m)
+                -self._at(self._room_right, now.s_m) - limit
                 <= now.n_m
-                <= self._at(self._room_left, now.s_m)
+                <= self._at(self._room_left, now.s_m) + limit
             )
             wrong_way = abs(now.psi_rad) > p.max_heading_rad
             too_slow = now.speed_ms < p.min_speed_ms
@@ -597,6 +612,22 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         info.update(self._info(off_track=off_track, lap_completed=lap_completed))
         info["advanced_m"] = self._state.s_m - start_s
         return self._observation(), total, terminated, truncated, info
+
+    def _opponent_features(self, opp: Opponent) -> NDArray[np.float32]:
+        """See `RaceEnvParams.opponent_features`."""
+        p, s = self.params, self._state
+        lat_speed = opp.state.speed_ms * math.sin(opp.state.psi_rad)
+        pending = 0.0
+        if self._ahead != self._held and p.pass_hold_m > 0:
+            frac = min(1.0, self._since_m / p.pass_hold_m)
+            pending = (1.0 if self._ahead else -1.0) * (1.0 - frac)
+        threat = 1.0 if self._tow(opp.state, s) > 0 else 0.0
+        grip = OPPONENT_KINDS[opp.kind][0]
+        edge = (grip - FollowerParams().grip_fraction) / 0.1
+        return np.array(
+            [np.clip(lat_speed / 5.0, -1.0, 1.0), pending, threat, edge],
+            dtype=np.float32,
+        )
 
     def _info(self, *, off_track: bool, lap_completed: bool) -> dict[str, Any]:
         s = self._state
@@ -677,8 +708,9 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             parts.append(self._base)
         if p.opponents:
             opp = self._opp
+            extra = 4 if p.opponent_features else 0
             if opp is None:
-                parts.append(np.zeros(4, dtype=np.float32))
+                parts.append(np.zeros(4 + extra, dtype=np.float32))
             else:
                 gap = wrap_gap(opp.state.s_m - s.s_m, self._lap_m)  # > 0: it is ahead
                 parts.append(
@@ -694,4 +726,6 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                         dtype=np.float32,
                     )
                 )
+                if p.opponent_features:
+                    parts.append(self._opponent_features(opp))
         return np.concatenate(parts).astype(np.float32)

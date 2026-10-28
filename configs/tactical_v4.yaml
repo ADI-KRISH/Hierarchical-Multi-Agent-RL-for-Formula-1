@@ -1,0 +1,95 @@
+# Overtake and defend, v4 (second-opinion review, 2026-10-28). Fixes the WORLD first,
+# then the learning. Checked with scripts/pass_gate.py before any training.
+#
+# World (before -> after; the scripted tactician on 12 validation battles each, pass
+# must stick for 1 km: attack slow 0 -> 10, attack equal 0 -> 4, defend 16/24 -> 18/24):
+# - follow_shield stays, but shield_in_tow false: the car behind may close up in the
+#   tow on a straight (the classic pass); soft_follow: it lifts to match the car
+#   ahead instead of braking at 80% (following used to cost more than a slower car
+#   ahead lost in the corners).
+# - opponent_yield false: scripted cars no longer brake and jump aside when a car is
+#   alongside (self-play rivals never did, and the policy could not tell them apart).
+#   The no-crash filter still keeps every car clear.
+# - wake_anticipation_m 75 -> 25: plan for dirty air only where it is felt.
+# - tow_accel_gain 0.3: the tow cuts "drag" along the whole straight (more
+#   acceleration), not just +6 m/s of top speed once flat out (the car has no drag).
+# - path_edge_inset_m 0.2 -> 0.6 and track_limit_margin_m 0 -> 0.5: close racing put
+#   the car on the edge of its path and a 0.2-0.5 m overshoot ended the battle.
+# Learning:
+# - commit_moves: a move runs to its end as one agent step (was: replaced every 0.5 s,
+#   so exploration dithered or collapsed).
+# - opponent_features: sideways speed, pass waiting to stick, tow threat, pace edge.
+# - reward (before -> after, invalidates earlier runs): progress_scale_m 10 -> 50 (a
+#   crash no longer forfeits ~300 of future progress), intervention_penalty 3 -> 0.5
+#   per filter step, pass_hold_m 1000 -> 600; overtake_bonus 100 and the GT Sophy
+#   relative-metres reward 1.0/m kept (symmetric: it pays defending too).
+# - curriculum: start 10-35 m from the other car (was 15-60), real gaps 8-40 m (was
+#   8-60); slower and equal cars to pass, equal and quicker cars to hold off.
+# - fresh start: behaviour cloning of the tactician in the fixed world, then PPO with
+#   reward normalisation; self-play rivals join once the pool has a few policies.
+tactical: true
+
+run:
+  name: tactical_v4
+  seed: 0
+  total_timesteps: 1500000   # agent decisions (a committed move is one decision)
+  n_envs: 8
+  eval_every_steps: 100000
+  torch_threads: 2
+  bc_decisions: 60000
+  bc_epochs: 10
+  real_start_frac: 0.5
+  incident_dir: data/incidents
+  real_eval_per_track: 20
+  rival_frac: 0.25
+  pool_every_steps: 150000
+  pool_size: 8
+  normalize_reward: true
+
+sim:
+  dt_s: 0.02
+  max_episode_steps: 10000
+
+env:
+  action_repeat: 5
+  reference_features: true
+  tactical: true
+  tires: true
+  safety_filter: true
+  wear_cost_per_unit: 3000.0
+  opponents: [none, slow, slow, equal, defender, attacker, attacker_equal, backmarker]
+  opponent_gap_m: [10.0, 35.0]
+  real_gap_m: [8.0, 40.0]
+  overtake_bonus: 100.0
+  pass_hold_m: 600.0
+  pass_reward_per_m: 1.0
+  intervention_penalty: 0.5
+  lookahead_windows_m: [10, 20, 30, 40, 50, 60, 80, 100, 125, 150, 200, 250]
+  progress_scale_m: 50.0
+  fail_penalty: 50.0
+  episode_s: 90.0
+  min_speed_ms: 3.0
+  follow_shield: true
+  shield_in_tow: false
+  soft_follow: true
+  opponent_yield: false
+  wake_anticipation_m: 25.0
+  tow_accel_gain: 0.3
+  path_edge_inset_m: 0.6
+  track_limit_margin_m: 0.5
+  commit_moves: true
+  opponent_features: true
+
+ppo:
+  learning_rate: 0.0003
+  n_steps: 128
+  batch_size: 256
+  n_epochs: 8
+  gamma: 0.97      # a decision is 0.5 s or a whole move: shorter look-ahead than 0.99
+  gae_lambda: 0.95
+  ent_coef: 0.02
+  clip_range: 0.2
+
+policy:
+  net_arch: [256, 256]
+  activation_fn: ReLU

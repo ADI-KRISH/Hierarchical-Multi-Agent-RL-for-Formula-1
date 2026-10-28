@@ -240,6 +240,12 @@ def main() -> None:
         names += list(sets.get(part.strip(), (part.strip(),)))
     policy: Any = args.policy
     params = env_params()
+    if args.config is not None and args.config.exists():
+        from f1rl.agents.tactical import load_tactical_config
+
+        params = replace(
+            load_tactical_config(args.config).env_params(), safety_filter=True
+        )
     if policy not in ("line", "tactician"):
         from stable_baselines3 import PPO
 

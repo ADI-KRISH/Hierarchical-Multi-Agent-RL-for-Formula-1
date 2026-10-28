@@ -35,7 +35,7 @@ import yaml
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 from stable_baselines3.common.logger import configure
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from f1rl.agents.ppo import git_sha
 from f1rl.agents.racer import prepare_tracks, resolve_track_names
@@ -79,6 +79,11 @@ class TacticalRun:
     # Start from an earlier model's weights (a .zip path; "" = fresh, then the
     # behaviour cloning above if any).
     init_model: str = ""
+    # Scale rewards by a running estimate of the return's spread (SB3 VecNormalize,
+    # rewards only): returns of hundreds with +-100 pass bonuses otherwise swamp the
+    # value function. Observations are left as they are, so saved models still run
+    # on the raw env.
+    normalize_reward: bool = False
 
 
 @dataclass(frozen=True)
@@ -448,7 +453,14 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
 
         return _make
 
-    vec_env = DummyVecEnv([make_multi(i) for i in range(run.n_envs)])
+    vec_env: Any = DummyVecEnv([make_multi(i) for i in range(run.n_envs)])
+    if run.normalize_reward:
+        vec_env = VecNormalize(
+            vec_env,
+            norm_obs=False,
+            norm_reward=True,
+            gamma=float(config.ppo.get("gamma", 0.99)),
+        )
     policy_kwargs = dict(config.policy)
     if "activation_fn" in policy_kwargs:
         policy_kwargs["activation_fn"] = getattr(

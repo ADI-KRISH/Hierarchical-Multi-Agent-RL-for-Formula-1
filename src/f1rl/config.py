@@ -285,6 +285,48 @@ class RaceEnvParams:
     tow_boost_ms: float = 6.0
     # The base driver plans its speeds for the wake from this far behind a car.
     wake_anticipation_m: float = 75.0
+    # Slipstream as extra ACCELERATION, not just top speed: the point-mass car has no
+    # drag, so a top-speed boost alone only helps once both cars are flat out at the
+    # cap. Real tow/DRS works by cutting drag along the whole straight. On a straight
+    # within `tow_m` the car behind gets max_accel_g * (1 + this). A design choice,
+    # not an F1 figure. 0 = off (earlier runs).
+    tow_accel_gain: float = 0.0
+    # The tactical "shield" that brakes the car behind whenever it is lined up within
+    # 12 m + 1 s of closing (and the same rule in scripted opponents). With the
+    # no-crash filter on it is not needed for safety, and it stops the classic pass:
+    # sit in the tow, pull out late. False = leave avoidance to the filter.
+    follow_shield: bool = True
+    # ...and False here lifts the shield only while the car is in the tow on a
+    # straight (where a pass is set up); it still holds in braking zones and corners,
+    # where running into the back of a car is the risk.
+    shield_in_tow: bool = True
+    # The shield brakes just enough to match the car ahead's speed (True) instead of
+    # braking at 80% every time (False, earlier runs): following used to cost so much
+    # time that even a slower car ahead drew away.
+    soft_follow: bool = False
+    # Tactical env: once a move (other than ``line``) starts, it runs to its end (or
+    # at most `commit_max_decisions` decisions) as ONE step of the agent. Earlier runs
+    # let every 0.5 s decision replace the running move, so a random policy dithered
+    # and never finished one, and a low-entropy one never tried another.
+    commit_moves: bool = False
+    commit_max_decisions: int = 24
+    # Extra opponent features: its sideways speed, a pass waiting to stick (+1 when
+    # we lead and it has not stuck yet, -1 when we were passed and it has not stuck,
+    # scaled by how far into `pass_hold_m` it is), whether it is in our tow (a
+    # threat), and its pace edge over us. False = the earlier observation.
+    opponent_features: bool = False
+    # Scripted opponents brake hard and move 2.5 m aside once a car is alongside.
+    # Self-play rivals never do, and the policy cannot tell them apart. False = no
+    # scripted yield (the no-crash filter still keeps every car clear).
+    opponent_yield: bool = True
+    # The scripted path driver keeps its planned path this far (m) inside the room
+    # the car's centre has. 0.2 = earlier runs; close racing pushes the car onto that
+    # path's edge, and a small tracking overshoot then ended the battle.
+    path_edge_inset_m: float = 0.2
+    # Track limits: the car's centre may go this far (m) past the line where its side
+    # touches the edge before it counts as off the track. 0 = earlier runs (any
+    # touch of the edge). A design choice: 1.0 would be the centre on the edge line.
+    track_limit_margin_m: float = 0.0
     # Reward paid (lost) when the car passes (is passed by) an opponent.
     overtake_bonus: float = 20.0
     # ...but only once the pass has stuck: the new order held for this many metres
@@ -378,6 +420,7 @@ OPPONENT_KINDS: Final = {
     "equal": (0.95, "ahead"),  # same pace: a real battle
     "defender": (0.95, "ahead"),  # same pace, covers and defends the inside
     "attacker": (0.97, "behind"),  # a touch quicker; tries to pass the car
+    "attacker_equal": (0.95, "behind"),  # same pace; tries to pass the car
     # Self-play: the same pace as the learner (`FollowerParams.grip_fraction`), its
     # moves picked by a copy of a learned policy (`TacticalEnv.rival`).
     "rival_ahead": (0.95, "ahead"),

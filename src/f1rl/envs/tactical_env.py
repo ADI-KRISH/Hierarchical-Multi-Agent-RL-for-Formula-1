@@ -19,11 +19,11 @@ from numpy.typing import NDArray
 
 from f1rl.agents.path_driver import PathDriver
 from f1rl.agents.tactics import MOVES, corners_ahead, make_move
-from f1rl.config import CarParams, RaceEnvParams, SimParams
+from f1rl.config import GRAVITY_M_S2, CarParams, RaceEnvParams, SimParams
 from f1rl.envs.opponents import (
     FOLLOW_GAP_M,
     NO_MOVE_BRAKE_M,
-    YIELD_BRAKE,
+    follow_brake,
     wrap_gap,
 )
 from f1rl.envs.race_env import ObsType, RaceEnv
@@ -89,14 +89,22 @@ class TacticalEnv(RaceEnv):
         """Safety under every move: brake rather than run into a car ahead on the same
         piece of track (the driver is a racer, not a bulldozer)."""
         opp = self._opp
-        if opp is None:
+        if opp is None or not self.params.follow_shield:
             return a
+        if not self.params.shield_in_tow and self._tow_now > 0:
+            return a  # in the tow on a straight: free to close up and pull out
         gap = wrap_gap(opp.state.s_m - self._state.s_m, self._lap_m)
         closing = max(0.0, self._state.speed_ms - opp.state.speed_ms)
         lined = abs(opp.state.n_m - self._state.n_m) < self.params.car_width_m + 0.3
         if lined and 0.0 < gap < FOLLOW_GAP_M + closing:
             a = a.copy()
-            a[0] = min(a[0], -YIELD_BRAKE)
+            a[0] = follow_brake(
+                float(a[0]),
+                gap,
+                closing,
+                self.car.max_braking_g * GRAVITY_M_S2,
+                self.params.soft_follow,
+            )
         return a
 
     def _may_change(self, corners: list[Any]) -> bool:
@@ -167,6 +175,29 @@ class TacticalEnv(RaceEnv):
         total = 0.0
         terminated = truncated = False
         info: dict[str, Any] = {}
+        p = self.params
+        chunks = 1
+        if p.commit_moves and self._move != "line":
+            chunks = p.commit_max_decisions
+        for chunk in range(chunks):
+            if chunk > 0:
+                m = self._maneuver
+                if m is None or self._state.s_m > m.end_s:
+                    break  # the move is done: the agent decides again
+                self._rival_move()
+            total, terminated, truncated, info = self._drive(
+                total, terminated, truncated, info
+            )
+            if terminated or truncated:
+                break
+        info["move"] = self._move
+        info["refused"] = self.refused
+        return self._tactical_obs(), total, terminated, truncated, info
+
+    def _drive(
+        self, total: float, terminated: bool, truncated: bool, info: dict[str, Any]
+    ) -> tuple[float, bool, bool, dict[str, Any]]:
+        """One decision's worth (`option_steps` env steps) of the running move."""
         for _ in range(self.option_steps):
             d = self._driver()  # grip (tyres, wake) may have moved the plan
             assert self._maneuver is not None
@@ -184,6 +215,4 @@ class TacticalEnv(RaceEnv):
             total += r
             if terminated or truncated:
                 break
-        info["move"] = self._move
-        info["refused"] = self.refused
-        return self._tactical_obs(), total, terminated, truncated, info
+        return total, terminated, truncated, info

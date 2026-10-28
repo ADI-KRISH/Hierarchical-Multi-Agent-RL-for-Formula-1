@@ -19,6 +19,7 @@ import numpy as np
 
 from f1rl.agents.path_driver import PathDriver
 from f1rl.agents.tactics import Corner, corners_ahead, make_move
+from f1rl.config import GRAVITY_M_S2
 from f1rl.models.frenet import FrenetState
 from f1rl.models.maneuver import Maneuver
 
@@ -32,6 +33,22 @@ YIELD_BRAKE = 0.8  # braking command when a car has the right of way
 INSIDE_GAP_M = 20.0
 #: An opponent keeps at least this gap (m) plus a second of closing speed.
 FOLLOW_GAP_M = 12.0
+
+
+def follow_brake(
+    pedal: float, gap_m: float, closing_ms: float, braking_ms2: float, soft: bool
+) -> float:
+    """The pedal of a car lined up behind another, ``gap_m`` back (centre to centre)
+    and closing at ``closing_ms``. Hard (earlier runs): brake at `YIELD_BRAKE`
+    whatever is needed. Soft: brake just enough to match its speed before the gap
+    closes to `FOLLOW_GAP_M` / 2 -- a driver lifts, he does not brake-check himself."""
+    if not soft:
+        return min(pedal, -YIELD_BRAKE)
+    room = max(0.5, gap_m - FOLLOW_GAP_M / 2)
+    if closing_ms <= 0.0:
+        return min(pedal, 0.0) if gap_m < FOLLOW_GAP_M / 2 else pedal
+    need = 1.2 * closing_ms**2 / (2.0 * room) / braking_ms2
+    return min(pedal, -min(1.0, need))
 
 
 def wrap_gap(gap_m: float, lap_m: float) -> float:
@@ -60,6 +77,9 @@ class Opponent:
         alongside_m: float,
         overlap_m: float,
         extra_speed_ms: float = 0.0,
+        shield: bool = True,
+        give_way: bool = True,
+        soft_follow: bool = False,
     ) -> np.ndarray:
         """The opponent's [throttle/brake, steer] for the next decision."""
         me = self.state
@@ -99,7 +119,8 @@ class Opponent:
         lined_up = abs(lateral) < overlap_m
         closing = max(0.0, me.speed_ms - car.speed_ms)
         rival = self.kind.startswith("rival")  # a learned driver: no scripted yield
-        if lined_up and -alongside_m / 2 < gap < alongside_m and not rival:
+        yields = give_way and not rival
+        if lined_up and -alongside_m / 2 < gap < alongside_m and yields:
             action[0] = min(action[0], -YIELD_BRAKE)
             if not self.yielding:  # leave room: move away from the car, once
                 self.yielding = True
@@ -110,8 +131,18 @@ class Opponent:
                 )
         elif self.yielding and abs(gap) > 2 * alongside_m:
             self.yielding = False
-        elif abs(lateral) < overlap_m - 0.7 and 0.0 < gap < FOLLOW_GAP_M + closing:
-            action[0] = min(action[0], -YIELD_BRAKE)
+        elif (
+            shield
+            and abs(lateral) < overlap_m - 0.7
+            and 0.0 < gap < FOLLOW_GAP_M + closing
+        ):
+            action[0] = follow_brake(
+                float(action[0]),
+                gap,
+                closing,
+                self.driver.car.max_braking_g * GRAVITY_M_S2,
+                soft_follow,
+            )
         return action
 
     def _threat(self, car: FrenetState, me: FrenetState) -> float:
@@ -125,7 +156,11 @@ class Opponent:
             if corners and -gap < INSIDE_GAP_M and corners[0].brake_m < 200.0:
                 return "inside"
             return "cover"
-        if self.kind == "attacker" and 0.0 < gap < REACT_GAP_M * 1.5 and corners:
+        if (
+            self.kind.startswith("attacker")
+            and 0.0 < gap < REACT_GAP_M * 1.5
+            and corners
+        ):
             return "divebomb" if self.side > 0 else "outside"
         return None
 

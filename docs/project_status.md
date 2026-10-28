@@ -201,5 +201,5 @@ PPO run `tactical_v4` (laptop, Desktop\RL_v4): behaviour cloning 95.9% then PPO;
 300k decisions (43-60 decisions/s, the full 1.5M would have taken ~8 h). Validation eval:
 start 52.5% (2 contacts, real attack 4/22, defend 16/18); 100k 41.0%; 200k 42.6% (0 contacts,
 `model_best.zip`); 300k 49.2% (1 contact, attack 7/22, defend 11/18). Attacking was improving,
-defending fell. Next: continue from the 300k weights with a defend-specific bonus and more
+defending fell. Only `model_best.zip` (200k) was saved. Next: continue from it with a defend-specific bonus and more
 defend starts, or a longer run overnight.

@@ -445,6 +445,16 @@ class RaceEnvParams:
     section_win_bonus: float = 0.0
     section_fail_penalty: float = 0.0
     section_tail_m: float = 100.0
+    # Opponents slower than us through the corners (grip below ours: backmarker,
+    # slow, guard_slow, guard_mid) also get this share of our top speed and
+    # acceleration. 1.0 = earlier runs (slower only in corners, so on a straight a
+    # slower car could never be caught out of the tow). A design choice, not an F1
+    # figure: 0.97 is ~10 km/h down at 350 km/h.
+    slow_power_frac: float = 1.0
+    # Tactical env: also offer the `tactics.PULL_MOVES` (pull alongside now, even in
+    # a braking zone or a corner). Changes the action and observation sizes, so
+    # False = earlier runs and their models.
+    pull_moves: bool = False
     safety_horizon_s: float = 2.5  # was 1.5; 1.5 s missed side-by-side corner entries
     safety_max_horizon_s: float = 3.0
     safety_dt_s: float = 0.05

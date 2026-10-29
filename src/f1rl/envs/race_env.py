@@ -513,10 +513,16 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                 soft_follow=p.soft_follow,
                 car_length_m=p.car_length_m,
             )
+            # A slower car (less grip than ours) can also be down on power:
+            # `slow_power_frac` of our top speed and acceleration (1.0 = earlier runs).
+            power = 1.0
+            if OPPONENT_KINDS[opp.kind][0] < FollowerParams().grip_fraction:
+                power = p.slow_power_frac
             opp_car = replace(
                 self.car,
-                max_speed_ms=self.car.max_speed_ms + opp_tow,
+                max_speed_ms=self.car.max_speed_ms * power + opp_tow,
                 max_accel_g=self.car.max_accel_g
+                * power
                 * (1.0 + (p.tow_accel_gain if opp_tow > 0 else 0.0)),
             )
             opp_cmd = (float(opp_action[0]), float(opp_action[1]))

@@ -18,7 +18,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from f1rl.agents.path_driver import PathDriver
-from f1rl.agents.tactics import MOVES, corners_ahead, make_move
+from f1rl.agents.tactics import MOVES, PULL_MOVES, corners_ahead, make_move
 from f1rl.config import GRAVITY_M_S2, CarParams, RaceEnvParams, SimParams
 from f1rl.envs.opponents import (
     FOLLOW_GAP_M,
@@ -48,10 +48,12 @@ class TacticalEnv(RaceEnv):
             raise ValueError("TacticalEnv needs RaceEnvParams(tactical=True)")
         super().__init__(car, track, sim, params, reference, mode)
         self.option_steps = option_steps
-        self.action_space = gym.spaces.Discrete(len(MOVES))
+        # The moves this env offers: `MOVES`, plus `PULL_MOVES` if turned on.
+        self.moves: tuple[str, ...] = MOVES + (PULL_MOVES if params.pull_moves else ())
+        self.action_space = gym.spaces.Discrete(len(self.moves))
         n = self.observation_space.shape[0]  # type: ignore[index]
         self.observation_space = gym.spaces.Box(
-            -5.0, 5.0, (n + len(MOVES) + 2,), np.float32
+            -5.0, 5.0, (n + len(self.moves) + 2,), np.float32
         )
         self._move = "line"
         self._maneuver: Maneuver | None = None
@@ -79,8 +81,8 @@ class TacticalEnv(RaceEnv):
         corners = corners_ahead(d, self._state.s_m)
         brake = min(corners[0].brake_m, 300.0) / 300.0 if corners else 1.0
         side = corners[0].side if corners else 0.0
-        hot = np.zeros(len(MOVES), dtype=np.float32)
-        hot[MOVES.index(self._move)] = 1.0
+        hot = np.zeros(len(self.moves), dtype=np.float32)
+        hot[self.moves.index(self._move)] = 1.0
         return np.concatenate(
             [self._observation(), hot, np.array([brake, side], dtype=np.float32)]
         ).astype(np.float32)
@@ -133,7 +135,7 @@ class TacticalEnv(RaceEnv):
         opp = self._opp
         if self.rival is None or opp is None or not opp.kind.startswith("rival"):
             return
-        want = MOVES[int(self.rival(self.rival_observation()))]
+        want = self.moves[int(self.rival(self.rival_observation()))]
         s = opp.state.s_m
         running = opp.maneuver is not None and s < opp.maneuver.end_s
         if want == self._opp_move and running:
@@ -151,12 +153,20 @@ class TacticalEnv(RaceEnv):
 
     def step(self, action: Any) -> tuple[ObsType, float, bool, bool, dict[str, Any]]:
         self._rival_move()
-        want = MOVES[int(action)]
+        want = self.moves[int(action)]
         d = self._driver()
         s = self._state.s_m
         corners = corners_ahead(d, s)
+        # An attacker may pull alongside in a braking zone (moving under braking is
+        # a defender's offence); a running cover still may not be switched.
+        attacking = (
+            want in PULL_MOVES
+            and self._opp is not None
+            and wrap_gap(self._opp.state.s_m - s, self._lap_m) > 0
+            and self._move != "cover"
+        )
         if want != self._move or self._maneuver is None or s > self._maneuver.end_s:
-            if self._may_change(corners) or self._maneuver is None:
+            if self._may_change(corners) or self._maneuver is None or attacking:
                 shift = self._state.n_m - d.base.line_state(s)[0]
                 threat = 0.0
                 if self._opp is not None:

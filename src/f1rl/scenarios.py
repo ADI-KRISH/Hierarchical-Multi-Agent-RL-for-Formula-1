@@ -33,7 +33,6 @@ from typing import Any
 import numpy as np
 
 from f1rl.agents.tactician import choose
-from f1rl.agents.tactics import MOVES
 from f1rl.config import EXAMPLE_CAR, RaceEnvParams, SimParams
 from f1rl.envs.racetrack import TUM_HELD_OUT, TUM_TRACKS, TUM_VALIDATION, load_tum_track
 from f1rl.envs.tactical_env import TacticalEnv
@@ -82,7 +81,7 @@ def pick(env: TacticalEnv, obs: Any, policy: Any) -> int:
     if policy == "line":
         return 0
     if policy == "tactician":
-        return MOVES.index(choose(env))
+        return env.moves.index(choose(env))
     return int(policy.predict(obs, deterministic=True)[0])
 
 

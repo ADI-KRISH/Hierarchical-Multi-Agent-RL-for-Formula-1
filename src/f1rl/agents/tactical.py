@@ -40,7 +40,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNorm
 from f1rl.agents.ppo import git_sha
 from f1rl.agents.racer import prepare_tracks, resolve_track_names
 from f1rl.agents.tactician import choose
-from f1rl.agents.tactics import MOVES
+from f1rl.agents.tactics import MOVES, PULL_MOVES
 from f1rl.config import (
     EXAMPLE_CAR,
     CarParams,
@@ -338,7 +338,7 @@ def clone_tactician(
             obs, _ = env.reset(seed=int(rng.integers(2**31 - 1)))
         done = False
         while not done and len(obs_list) < decisions:
-            move = MOVES.index(choose(env))
+            move = env.moves.index(choose(env))
             obs_list.append(obs)
             act_list.append(move)
             if multi is not None:
@@ -534,7 +534,7 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
                     "validation": val_names,
                     "held_out": test_names,
                 },
-                "moves": list(MOVES),
+                "moves": list(MOVES + (PULL_MOVES if params.pull_moves else ())),
             },
             indent=2,
         ),

@@ -26,6 +26,17 @@ from f1rl.agents.path_driver import PathDriver
 from f1rl.models.maneuver import Maneuver
 
 MOVES = ("line", "outside", "divebomb", "dummy", "switchback", "cover", "inside")
+#: Extra attacking moves (`RaceEnvParams.pull_moves`): pull alongside NOW, toward the
+#: inside or the outside of the next corner (or the one we are in), even in a braking
+#: zone or a corner. The other moves are planned from the straight before a corner,
+#: so in a corner, or with the braking point near, there was no way to get alongside.
+PULL_MOVES = ("pull_in", "pull_out")
+#: Pull moves: the shift (m, a car width plus a gap), how quickly it is made, at
+#: least how long it is held (or to just past the apex), and the smallest worth it.
+PULL_SHIFT_M = 2.8
+PULL_RAMP_M = 50.0
+PULL_HOLD_M = 200.0
+PULL_MIN_M = 1.5
 
 #: Largest sideways shift a move asks for (m): a car width plus a gap, and the
 #: ramp lengths (m) over which it is made and undone.
@@ -119,6 +130,8 @@ def make_move(
     ``shift_now`` m off the racing line. ``threat_shift`` is where the car behind
     sits relative to the line (for ``cover``)."""
     ahead = [c for c in corners_ahead(driver, s_m) if c.apex_m > 5.0]
+    if name in PULL_MOVES:
+        return pull_move(name, driver, s_m, shift_now, ahead)
     # Not on if the nearest corner's braking zone is already here or too close.
     corners = ahead if ahead and ahead[0].brake_m >= MIN_ROOM_M else []
     a = min(amplitude, MAX_SHIFT_M)
@@ -220,3 +233,34 @@ def make_move(
             ],
         )
     raise ValueError(f"unknown move {name!r}")
+
+
+def pull_move(
+    name: str, driver: PathDriver, s_m: float, shift_now: float, ahead: list[Corner]
+) -> Maneuver:
+    """``pull_in`` / ``pull_out``: shift toward the inside / outside of the next
+    corner (the one we are in, if before its apex) right away, hold it to just past
+    that apex (at least `PULL_HOLD_M`), then rejoin the line. Without a corner
+    ahead, toward the side with more road. Not on if there is no room."""
+    if ahead:
+        c = ahead[0]
+        side = c.side if name == "pull_in" else -c.side
+        hold = max(PULL_HOLD_M, c.apex_m + 30.0)
+        if len(ahead) > 1:  # back on the line before the next braking zone
+            hold = min(hold, max(c.apex_m + 30.0, ahead[1].brake_m - 60.0))
+    else:
+        room = {sd: room_beside(driver, s_m, PULL_HOLD_M, sd) for sd in (1.0, -1.0)}
+        side = max(room, key=lambda sd: room[sd])
+        if name == "pull_out":
+            side = -side
+        hold = PULL_HOLD_M
+    free = room_beside(driver, s_m + PULL_RAMP_M, 60.0, side) - EDGE_CLEARANCE_M
+    amount = min(PULL_SHIFT_M, free)
+    if amount < PULL_MIN_M:
+        return make_move("line", driver, s_m, shift_now)
+    target = side * amount
+    return _after(
+        s_m,
+        shift_now,
+        [(PULL_RAMP_M, target), (hold, target), (hold + RECOVER_M, 0.0)],
+    )

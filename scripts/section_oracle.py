@@ -15,8 +15,9 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from f1rl.agents.tactical import load_tactical_config, section_won
-from f1rl.agents.tactics import MOVES
 from f1rl.envs.racetrack import TUM_TRAIN, TUM_VALIDATION
 from f1rl.scenarios import make_env
 from f1rl.sections import KINDS, Section, env_sections, section_options
@@ -42,9 +43,13 @@ def main() -> None:
     ap.add_argument("--opponents", default="slow")
     ap.add_argument("--gap", type=float, default=9.0)
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument(
+        "--set", nargs="*", default=[], help="env overrides, e.g. pull_moves=true"
+    )
     args = ap.parse_args()
     config = load_tactical_config(args.config)
-    params = replace(config.env_params(), safety_filter=True)
+    extra = {k: yaml.safe_load(v) for k, v in (kv.split("=", 1) for kv in args.set)}
+    params = replace(config.env_params(), safety_filter=True, **extra)
     sets = {"validation": TUM_VALIDATION, "train": TUM_TRAIN}
     names = sets.get(args.tracks, tuple(args.tracks.split(",")))
     rows = []
@@ -53,10 +58,10 @@ def main() -> None:
         for sec in env_sections(env, config.section_params()):
             for opp in args.opponents.split(","):
                 plan = None
-                for move in range(1, len(MOVES)):
+                for move in range(1, len(env.moves)):
                     for wait in WAITS:
                         if try_plan(env, sec, opp, args.gap, move, wait):
-                            plan = (MOVES[move], wait)
+                            plan = (env.moves[move], wait)
                             break
                     if plan:
                         break

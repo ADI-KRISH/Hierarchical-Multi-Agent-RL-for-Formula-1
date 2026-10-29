@@ -4,7 +4,9 @@
 Attacking (car ahead): pull out early enough to be lined up beside it by the braking
 point -- ``divebomb`` the next corner when there is road to do it, ``dummy`` first when
 there is room for a feint, ``outside`` when the inside is closed, ``switchback`` when
-the corner is too close to attack but the next one is not.
+the corner is too close to attack but the next one is not. With the pull moves on
+(`RaceEnvParams.pull_moves`), ``pull_in`` when right behind it in the tow or with the
+corner too near for a planned move.
 
 Defending (car behind): ``inside`` when it is right behind us and a corner is near
 (close the door), else ``cover`` its side once; ``line`` when nothing threatens.
@@ -23,6 +25,8 @@ INSIDE_GAP_M = 20.0
 FEINT_ROOM_M = 200.0
 #: Be this close (m, centre to centre) or nearer by the braking zone to attack.
 OVERLAP_BY_BRAKING_M = 4.0
+#: With the pull moves on: pull alongside when within this gap (m, centre to centre).
+PULL_GAP_M = 9.0
 
 
 def choose(env: TacticalEnv) -> str:
@@ -51,6 +55,11 @@ def choose(env: TacticalEnv) -> str:
             t = max(0.0, room - 100.0) / max(me.speed_ms, 1.0)
             if gap - closing * t <= OVERLAP_BY_BRAKING_M:
                 return "dummy" if room >= FEINT_ROOM_M else "divebomb"
+        if "pull_in" in env.moves and gap < PULL_GAP_M:
+            # Right behind it with the braking point (or the corner) too near for a
+            # planned move, or stuck in its tow: pull alongside now, inside first.
+            if (corners and room < MIN_ROOM_M) or env._tow_now > 0:
+                return "pull_in"
         if corners and room < MIN_ROOM_M and len(corners) > 1:
             return "switchback"
         return "line"

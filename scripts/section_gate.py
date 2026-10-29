@@ -15,6 +15,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from f1rl.agents.tactical import load_tactical_config, section_battle
 from f1rl.envs.racetrack import TUM_HELD_OUT, TUM_TRAIN, TUM_VALIDATION
 from f1rl.scenarios import make_env
@@ -29,9 +31,13 @@ def main() -> None:
     ap.add_argument("--opponents", default="slow,guard_slow")
     ap.add_argument("--gap", type=float, default=9.0)
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument(
+        "--set", nargs="*", default=[], help="env overrides, e.g. pull_moves=true"
+    )
     args = ap.parse_args()
     config = load_tactical_config(args.config)
-    params = replace(config.env_params(), safety_filter=True)
+    extra = {k: yaml.safe_load(v) for k, v in (kv.split("=", 1) for kv in args.set)}
+    params = replace(config.env_params(), safety_filter=True, **extra)
     sets = {
         "validation": TUM_VALIDATION,
         "train": TUM_TRAIN,

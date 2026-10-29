@@ -12,7 +12,20 @@
 # same no-crash filter on both cars. Reward = tactical_v4's plus, in section
 # battles only: +30 when ahead at the section's end, -30 when still behind (then
 # the battle ends). Earlier runs are unaffected (no section battles there).
-# Checked first with scripts/section_gate.py (the scripted tactician).
+# Checked first with scripts/section_gate.py (the scripted tactician) and
+# scripts/section_oracle.py (brute force over single moves and timings).
+#
+# World changes against tactical_v4 (found with the oracle: in the v4 world even
+# brute force won only 25 of 180 sections on 6 tracks, the attacker almost never got
+# alongside):
+# - slow_power_frac 0.97: cars slower through the corners are also ~3% down on top
+#   speed and acceleration (before: equal on the straights, so out of the tow a
+#   slower car could never be caught on a straight).
+# - pull_moves: two extra moves, pull_in / pull_out, that pull alongside right away,
+#   also in a braking zone or a corner (an attacker may; a defender still may not
+#   move under braking). The planned moves need 100 m before the braking point.
+# - corner battles start half alongside (corner_gap_m 3 behind, corner_shift_m 3 to
+#   the inside or outside): from straight behind, one corner is too short to pass.
 tactical: true
 
 run:
@@ -71,6 +84,8 @@ env:
   path_edge_inset_m: 0.6
   track_limit_margin_m: 0.5
   commit_moves: true
+  slow_power_frac: 0.97
+  pull_moves: true
   section_win_bonus: 30.0
   section_fail_penalty: 30.0
   section_tail_m: 100.0

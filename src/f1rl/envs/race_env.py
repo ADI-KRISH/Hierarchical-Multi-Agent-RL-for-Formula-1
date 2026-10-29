@@ -63,8 +63,9 @@ ActType = NDArray[np.float32]
 
 
 #: Moving sideways toward the other car faster than this (m/s) counts as cutting
-#: across it (a chop), when just in front of its nose.
-CHOP_LAT_MS = 0.3
+#: across it (a chop), when just in front of its nose. A deliberate change of lane
+#: is 1-3 m/s; following a line that sweeps across the road is ~0.4.
+CHOP_LAT_MS = 1.0
 
 
 class RaceEnv(gym.Env[ObsType, ActType]):

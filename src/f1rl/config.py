@@ -55,6 +55,12 @@ class CarParams:
     max_accel_g: float
     max_braking_g: float
     max_speed_ms: float
+    # Aerodynamic drag as a deceleration drag_per_m * v^2 (1/m), applied by
+    # `models.frenet.frenet_step` on top of the throttle/brake. 0 = no drag (the
+    # car accelerates at max_accel_g right up to max_speed_ms). Not a free number:
+    # `RaceEnvParams.aero_drag` sets it to max_accel_g * g / max_speed_ms^2, the
+    # drag at which full throttle just holds top speed.
+    drag_per_m: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -390,6 +396,23 @@ class RaceEnvParams:
     # within `tow_m` the car behind gets max_accel_g * (1 + this). A design choice,
     # not an F1 figure. 0 = off (earlier runs).
     tow_accel_gain: float = 0.0
+    # Air drag (`CarParams.drag_per_m`): full throttle fades as speed builds, so a
+    # straight is a drag race, and the car in the tow (on a straight within `tow_m`)
+    # has its drag cut by `tow_drag_cut`. That is how slipstream and DRS really
+    # work: less drag along the whole straight, not just a higher top speed. With
+    # drag the top speed is approached, not hit, so the tow's speed cap
+    # (`tow_boost_ms`) only matters if it is set below the tow's own top speed,
+    # max_speed_ms / sqrt(1 - tow_drag_cut). False = earlier runs (no drag).
+    aero_drag: bool = False
+    # Share of drag the tow (slipstream plus DRS) removes. A design choice, not an
+    # F1 figure: 0.12 raises the tow's top speed ~6.6% (~23 km/h at 350), the scale
+    # of the reported DRS gain (~10-15 km/h) plus slipstream.
+    tow_drag_cut: float = 0.12
+    # The tactical driver's extra view (`TacticalEnv`): the corner after next
+    # (distance to its braking point, its side), the metres left in a section
+    # battle, and where the car ahead sits off the racing line now and how that
+    # changed over the last second (how it is defending). False = earlier runs.
+    plan_features: bool = False
     # The tactical "shield" that brakes the car behind whenever it is lined up within
     # 12 m + 1 s of closing (and the same rule in scripted opponents). With the
     # no-crash filter on it is not needed for safety, and it stops the classic pass:

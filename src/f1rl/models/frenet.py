@@ -8,7 +8,7 @@ curvature ``kappa`` (positive = left), the standard kinematics are::
     ds/dt  = v cos(psi) / (1 - n kappa)
     dn/dt  = v sin(psi)
     dpsi/dt = a_y / v - kappa ds/dt          (a_y: centripetal accel, left positive)
-    dv/dt  = a_x
+    dv/dt  = a_x - drag v^2           (drag: `CarParams.drag_per_m`, 0 = none)
 
 The offset ``n`` now changes the corner the car drives: sitting on the inside of a
 bend shortens it (``ds/dt`` is faster along the centreline) and opens its radius
@@ -51,7 +51,12 @@ def map_action(car: CarParams, u_long: float, u_lat: float) -> tuple[float, floa
 
 
 def _rates(
-    state: FrenetState, a_x: float, a_y: float, kappa: float, speed_floor_ms: float
+    state: FrenetState,
+    a_x: float,
+    a_y: float,
+    kappa: float,
+    speed_floor_ms: float,
+    drag_per_m: float = 0.0,
 ) -> tuple[float, float, float, float]:
     """(ds/dt, dn/dt, dpsi/dt, dv/dt) at ``state`` -- see the module docstring."""
     v = state.speed_ms
@@ -61,7 +66,7 @@ def _rates(
         ds,
         v * math.sin(state.psi_rad),
         a_y / max(v, speed_floor_ms) - kappa * ds,
-        a_x,
+        a_x - drag_per_m * v * v,
     )
 
 
@@ -82,14 +87,15 @@ def frenet_step(
     exactly following a line by about a metre per lap at 50 Hz, which is more than
     the margin a racing line leaves.
     """
-    k1 = _rates(state, a_x, a_y, kappa_at(state.s_m), speed_floor_ms)
+    drag = car.drag_per_m
+    k1 = _rates(state, a_x, a_y, kappa_at(state.s_m), speed_floor_ms, drag)
     half = FrenetState(
         state.s_m + 0.5 * dt_s * k1[0],
         state.n_m + 0.5 * dt_s * k1[1],
         state.psi_rad + 0.5 * dt_s * k1[2],
         state.speed_ms + 0.5 * dt_s * k1[3],
     )
-    k2 = _rates(half, a_x, a_y, kappa_at(half.s_m), speed_floor_ms)
+    k2 = _rates(half, a_x, a_y, kappa_at(half.s_m), speed_floor_ms, drag)
     v = min(car.max_speed_ms, max(0.0, state.speed_ms + dt_s * k2[3]))
     return FrenetState(
         state.s_m + dt_s * k2[0],

@@ -20,6 +20,7 @@ from numpy.typing import NDArray
 from f1rl.agents.path_driver import PathDriver
 from f1rl.agents.tactics import (
     LANE_MOVES,
+    LOOKAHEAD_M,
     MOVES,
     PULL_MOVES,
     corners_ahead,
@@ -39,6 +40,10 @@ from f1rl.models.raceline import OptimalLine
 
 #: The no-chop rule looks this far (m) ahead along the plan, and holds that long.
 CHOP_LOOK_M = 30.0
+#: `RaceEnvParams.plan_features`: how many numbers they add to the observation...
+PLAN_FEATURES = 5
+#: ...and over how many decisions back (0.5 s each) the car ahead's move is seen.
+PLAN_HISTORY = 2
 
 
 class TacticalEnv(RaceEnv):
@@ -65,9 +70,14 @@ class TacticalEnv(RaceEnv):
         )
         self.action_space = gym.spaces.Discrete(len(self.moves))
         n = self.observation_space.shape[0]  # type: ignore[index]
+        plan = PLAN_FEATURES if params.plan_features else 0
         self.observation_space = gym.spaces.Box(
-            -5.0, 5.0, (n + len(self.moves) + 2,), np.float32
+            -5.0, 5.0, (n + len(self.moves) + 2 + plan,), np.float32
         )
+        # Both cars' offsets from the racing line at the last decisions, oldest
+        # first (`plan_features`: how the car ahead has been moving).
+        self._offsets: list[tuple[float, float]] = []
+        self._swapped = False  # building the rival's view (cars swapped)
         self._move = "line"
         self._maneuver: Maneuver | None = None
         self.refused = 0  # moves refused by the rules, this episode
@@ -84,7 +94,45 @@ class TacticalEnv(RaceEnv):
         self._move, self._maneuver, self.refused = "line", None, 0
         self.chop_holds = 0
         self._opp_move = "line"
+        self._offsets = []
+        self._record_offsets()
         return self._tactical_obs(), info
+
+    def _line_offset(self, state: Any) -> float:
+        """A car's offset (m, left +) from the racing line at its own position."""
+        return float(state.n_m - self._driver().base.line_state(state.s_m)[0])
+
+    def _record_offsets(self) -> None:
+        if self._opp is None:
+            return
+        pair = (self._line_offset(self._state), self._line_offset(self._opp.state))
+        self._offsets = [*self._offsets, pair][-PLAN_HISTORY - 1 :]
+
+    def _plan_obs(self, corners: list[Any]) -> NDArray[np.float32]:
+        """See `RaceEnvParams.plan_features`."""
+        brake2, side2 = 1.0, 0.0
+        if len(corners) > 1:
+            brake2, side2 = min(corners[1].brake_m, 600.0) / 600.0, corners[1].side
+        left = 1.0
+        if self._section_m is not None:
+            done = self._state.s_m - self._start_s
+            left = float(np.clip((self._section_m - done) / 1000.0, 0.0, 1.0))
+        other, moved = 0.0, 0.0
+        if self._opp is not None:
+            other = self._line_offset(self._opp.state)
+            if self._offsets:
+                past = self._offsets[0][0 if self._swapped else 1]
+                moved = other - past
+        return np.array(
+            [
+                brake2,
+                side2,
+                left,
+                np.clip(other / 5.0, -2.0, 2.0),
+                np.clip(moved / 3.0, -2.0, 2.0),
+            ],
+            dtype=np.float32,
+        )
 
     def _driver(self) -> PathDriver:
         d = self._follower()
@@ -93,14 +141,16 @@ class TacticalEnv(RaceEnv):
 
     def _tactical_obs(self) -> ObsType:
         d = self._driver()
-        corners = corners_ahead(d, self._state.s_m)
+        plan = self.params.plan_features
+        corners = corners_ahead(d, self._state.s_m, 900.0 if plan else LOOKAHEAD_M)
         brake = min(corners[0].brake_m, 300.0) / 300.0 if corners else 1.0
         side = corners[0].side if corners else 0.0
         hot = np.zeros(len(self.moves), dtype=np.float32)
         hot[self.moves.index(self._move)] = 1.0
-        return np.concatenate(
-            [self._observation(), hot, np.array([brake, side], dtype=np.float32)]
-        ).astype(np.float32)
+        parts = [self._observation(), hot, np.array([brake, side], dtype=np.float32)]
+        if plan:
+            parts.append(self._plan_obs(corners))
+        return np.concatenate(parts).astype(np.float32)
 
     def _shield(self, a: NDArray[np.float32]) -> NDArray[np.float32]:
         """Safety under every move: brake rather than run into a car ahead on the same
@@ -168,9 +218,11 @@ class TacticalEnv(RaceEnv):
         self._state, opp.state = opp.state, self._state
         self._last, self._move = self._opp_last, self._opp_move
         self._tow_now = self._tow(self._state, opp.state)
+        self._swapped = True
         try:
             return self._tactical_obs()
         finally:
+            self._swapped = False
             opp.state, self._state = self._state, mine[0]
             self._last, self._move, self._tow_now = mine[1], mine[2], mine[3]
 
@@ -258,6 +310,7 @@ class TacticalEnv(RaceEnv):
                 break
         info["move"] = self._move
         info["refused"] = self.refused
+        self._record_offsets()
         return self._tactical_obs(), total, terminated, truncated, info
 
     def _drive(

@@ -82,3 +82,25 @@ def test_speed_is_capped_and_never_negative() -> None:
     slow = FrenetState(0.0, 0.0, 0.0, 1.0)
     slow = frenet_step(EXAMPLE_CAR, slow, -1e3, 0.0, _straight, 0.02, 10.0)
     assert slow.speed_ms == 0.0
+
+
+def test_drag_fades_full_throttle_toward_top_speed_and_slows_a_coasting_car() -> None:
+    import dataclasses
+
+    v_top = EXAMPLE_CAR.max_speed_ms
+    a_max = EXAMPLE_CAR.max_accel_g * G
+    car = dataclasses.replace(EXAMPLE_CAR, drag_per_m=a_max / v_top**2)
+    full = map_action(car, 1.0, 0.0)[0]
+    state = FrenetState(0.0, 0.0, 0.0, 0.5 * v_top)
+    v0 = state.speed_ms
+    state = frenet_step(car, state, full, 0.0, _straight, 0.02, 10.0)
+    # At half top speed drag takes a quarter of the throttle.
+    assert (state.speed_ms - v0) / 0.02 == pytest.approx(0.75 * a_max, rel=0.02)
+    for _ in range(3000):  # 60 s flat out: approaches top speed, never past it
+        state = frenet_step(car, state, full, 0.0, _straight, 0.02, 10.0)
+    assert 0.97 * v_top < state.speed_ms <= v_top
+    fast = FrenetState(0.0, 0.0, 0.0, v_top)
+    coast = frenet_step(car, fast, 0.0, 0.0, _straight, 0.02, 10.0)
+    assert (v_top - coast.speed_ms) / 0.02 == pytest.approx(a_max, rel=0.02)
+    # No drag (the default): the speed holds when coasting.
+    assert frenet_step(EXAMPLE_CAR, fast, 0.0, 0.0, _straight, 0.02, 10.0).speed_ms == v_top

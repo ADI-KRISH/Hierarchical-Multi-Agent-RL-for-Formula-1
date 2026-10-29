@@ -1,4 +1,6 @@
 import dataclasses
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -184,3 +186,77 @@ def test_a_path_driver_with_its_steering_maxed_out_can_still_brake() -> None:
     assert abs(old[1]) == pytest.approx(1.0) and old[0] == pytest.approx(0.0)
     assert new[0] == pytest.approx(-0.6, abs=1e-6)  # brakes...
     assert abs(new[1]) == pytest.approx(0.8, abs=1e-6)  # ...giving up some steering
+
+
+def test_aero_drag_cuts_the_drag_of_a_car_in_the_tow() -> None:
+    track = stadium_track()
+    line = optimal_line(track, EXAMPLE_CAR, MARGIN_M)
+    off = TacticalEnv(EXAMPLE_CAR, track, SimParams(seed=0), PARAMS, line, "lap")
+    assert off._drag(False) == 0.0 and off._drag(True) == 0.0
+    params = dataclasses.replace(PARAMS, aero_drag=True, tow_drag_cut=0.12)
+    env = TacticalEnv(EXAMPLE_CAR, track, SimParams(seed=0), params, line, "lap")
+    k = env._drag(False)
+    top = EXAMPLE_CAR.max_speed_ms
+    assert k * top**2 == pytest.approx(EXAMPLE_CAR.max_accel_g * 9.80665, rel=1e-3)
+    assert env._drag(True) == pytest.approx(0.88 * k)
+    env.reset(seed=0)
+    assert env._car_now.drag_per_m == pytest.approx(k)  # nobody ahead: full drag
+
+
+def test_plan_features_add_the_next_corners_and_the_cars_ahead_moves() -> None:
+    from f1rl.envs.tactical_env import PLAN_FEATURES
+
+    track = stadium_track()
+    line = optimal_line(track, EXAMPLE_CAR, MARGIN_M)
+    base = TacticalEnv(EXAMPLE_CAR, track, SimParams(seed=0), PARAMS, line, "random")
+    params = dataclasses.replace(PARAMS, plan_features=True)
+    env = TacticalEnv(EXAMPLE_CAR, track, SimParams(seed=0), params, line, "random")
+    n0 = base.observation_space.shape[0]  # type: ignore[index]
+    assert env.observation_space.shape[0] == n0 + PLAN_FEATURES  # type: ignore[index]
+    obs, _ = env.reset(seed=0, options={"opponent": "slow", "gap_m": 15.0})
+    assert env.observation_space.contains(obs)
+    for _ in range(6):
+        obs, *_ = env.step(env.moves.index("line"))
+    plan = obs[-PLAN_FEATURES:]
+    assert plan[2] == 1.0  # no section battle: nothing counting down
+    assert abs(plan[3]) < 2.0 and abs(plan[4]) < 2.0
+    check_env(env, skip_render_check=True)
+
+
+def _box_env(n: int) -> Any:
+    """A do-nothing env with an ``n``-number observation and 3 moves."""
+    import gymnasium as gym
+
+    class Env(gym.Env):  # type: ignore[type-arg]
+        observation_space = gym.spaces.Box(-1.0, 1.0, (n,), np.float32)
+        action_space = gym.spaces.Discrete(3)
+
+        def reset(self, *, seed: Any = None, options: Any = None) -> Any:
+            super().reset(seed=seed)
+            return np.zeros(n, np.float32), {}
+
+        def step(self, action: Any) -> Any:
+            return np.zeros(n, np.float32), 0.0, True, False, {}
+
+    return Env()
+
+
+def test_a_saved_policy_loads_into_a_grown_observation_unchanged(
+    tmp_path: Path,
+) -> None:
+    import torch
+    from stable_baselines3 import PPO
+
+    from f1rl.agents.tactical import load_grown
+
+    small = PPO("MlpPolicy", _box_env(4), seed=0, device="cpu", n_steps=8)
+    small.save(tmp_path / "small.zip")
+    big = PPO("MlpPolicy", _box_env(6), seed=1, device="cpu", n_steps=8)
+    grown = load_grown(big, str(tmp_path / "small.zip"))
+    assert grown  # the first layers grew
+    obs = torch.tensor([[0.3, -0.2, 0.5, 0.1]])
+    wide = torch.cat([obs, torch.tensor([[0.9, -0.7]])], dim=1)
+    with torch.no_grad():
+        a = small.policy.get_distribution(obs).distribution.probs
+        b = big.policy.get_distribution(wide).distribution.probs
+    assert torch.allclose(a, b, atol=1e-6)

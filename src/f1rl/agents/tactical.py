@@ -504,6 +504,30 @@ class ScenarioCallback(BaseCallback):
         self._evaluate()
 
 
+
+def load_grown(model: PPO, path: str) -> list[str]:
+    """Load a saved policy into ``model``, whose observation may have grown: new
+    inputs (appended at the end, e.g. `RaceEnvParams.plan_features`) get zero
+    weights in the first layers, so the model starts out acting exactly as the saved
+    one did. Returns the names of the layers that grew."""
+    saved = PPO.load(path, device="cpu").policy.state_dict()
+    mine = model.policy.state_dict()
+    grown = []
+    for key, old in saved.items():
+        new = mine[key]
+        if old.shape != new.shape:
+            if old.dim() != 2 or old.shape[0] != new.shape[0] or (
+                old.shape[1] > new.shape[1]
+            ):
+                raise ValueError(f"{key}: {tuple(old.shape)} -> {tuple(new.shape)}")
+            pad = new.new_zeros(new.shape)
+            pad[:, : old.shape[1]] = old
+            old = pad
+            grown.append(key)
+        mine[key] = old
+    model.policy.load_state_dict(mine)
+    return grown
+
 def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -> PPO:
     run = config.run
     torch.set_num_threads(run.torch_threads)
@@ -643,8 +667,10 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
     )
     model.set_logger(configure(str(run_dir), ["csv"]))
     if run.init_model:
-        model.set_parameters(run.init_model, exact_match=True, device="cpu")
+        grown = load_grown(model, run.init_model)
         print(f"Starting from {run.init_model}", flush=True)
+        if grown:
+            print(f"  new inputs start at zero weight: {', '.join(grown)}", flush=True)
     elif run.bc_decisions:
         agree = clone_tactician(
             model,

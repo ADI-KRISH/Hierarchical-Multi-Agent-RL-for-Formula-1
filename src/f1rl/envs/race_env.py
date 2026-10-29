@@ -287,6 +287,14 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         )
         return p.tow_boost_ms if p.car_length_m < gap <= p.tow_m and straight else 0.0
 
+    def _drag(self, in_tow: bool) -> float:
+        """`CarParams.drag_per_m` for a car (see `RaceEnvParams.aero_drag`)."""
+        p = self.params
+        if not p.aero_drag:
+            return 0.0
+        k = self.car.max_accel_g * GRAVITY_M_S2 / self.car.max_speed_ms**2
+        return k * (1.0 - p.tow_drag_cut) if in_tow else k
+
     def _update_grip(self) -> None:
         """Set the grip multiplier (tyres x wake) and the car it gives."""
         p = self.params
@@ -299,6 +307,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         self._tow_now = self._tow(self._state, self._opp.state) if self._opp else 0.0
         self._car_now = replace(
             self.car,
+            drag_per_m=self._drag(self._tow_now > 0),
             max_speed_ms=self.car.max_speed_ms + self._tow_now,
             max_lateral_g=self.car.max_lateral_g * g,
             max_accel_g=self.car.max_accel_g
@@ -544,6 +553,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                 power = p.slow_power_frac
             opp_car = replace(
                 self.car,
+                drag_per_m=self._drag(opp_tow > 0),
                 max_speed_ms=self.car.max_speed_ms * power + opp_tow,
                 max_accel_g=self.car.max_accel_g
                 * power

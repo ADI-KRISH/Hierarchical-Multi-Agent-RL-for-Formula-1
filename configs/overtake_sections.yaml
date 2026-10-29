@@ -126,3 +126,4 @@ sections:
   corner_gap_m: 3.0
   corner_shift_m: 3.0
   min_length_m: 80.0
+  finish_at_exit: true

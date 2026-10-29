@@ -58,6 +58,22 @@ def test_sections_cover_each_corner_in_order() -> None:
     assert straight.shift_m == 0.0 and 0.0 < corner_in.gap_m < 5.5
 
 
+def test_finish_at_exit_runs_straights_and_braking_to_the_corner_exit() -> None:
+    v, kappa = _profile()
+    base = track_sections("synthetic", v, kappa, 5.0, 100.0)
+    late = track_sections(
+        "synthetic", v, kappa, 5.0, 100.0, SectionParams(finish_at_exit=True)
+    )
+    assert [s.kind for s in late] == [s.kind for s in base]
+    for a, b in zip(base, late, strict=True):
+        assert a.start_s == b.start_s
+        assert b.length_m >= a.length_m
+    straight, braking, corner, _ = late[:4]
+    exit_s = (corner.start_s + corner.length_m) % 2000
+    for sec in (straight, braking):
+        assert abs((sec.start_s + sec.length_m) % 2000 - exit_s) < 1e-6
+
+
 def test_short_sections_are_dropped() -> None:
     v, kappa = _profile()
     secs = track_sections(

@@ -109,19 +109,25 @@ def track_sections(
         prev_apex = corners[i - 1][1] * ds_m
         if prev_apex >= apex:
             prev_apex -= lap
-        spans: list[tuple[str, float, float, float, float]] = []
-        # Straight: from the previous apex (the exit is where a quicker car gains)
-        # to the braking point (the pass must be done by then).
-        spans.append(("straight", prev_apex + p.straight_from_apex_m, brake, 0, 0))
-        # Braking zone: the approach to the braking point to just past the apex.
+        spans: list[tuple[str, float, float, float]] = []
         approach = max(brake - p.approach_m, prev_apex + p.straight_from_apex_m)
-        spans.append(("braking", approach, apex + p.past_apex_m, 0, 0))
-        # Corner: turn-in (a little before the braking point ends) to the exit.
         turn_in = max(brake + p.turn_in_frac * (apex - brake), approach)
+        # Corner exit: the top of the ramp out of it (60-`corner_exit_m` m past it).
         end = min(apex + p.corner_exit_m, max(top, apex + 60.0))
-        shift, gap = side * p.corner_shift_m, p.corner_gap_m
-        spans.append(("corner_in", turn_in, end, shift, gap))
-        spans.append(("corner_out", turn_in, end, -shift, gap))
+        # Straight: from the previous apex (the exit is where a quicker car gains)
+        # to the braking point (the pass must be done by then, or by the exit).
+        straight = prev_apex + p.straight_from_apex_m
+        if brake - straight >= p.min_length_m:
+            spans.append(("straight", straight, end if p.finish_at_exit else brake, 0.0))
+        # Braking zone: the approach to the braking point to just past the apex.
+        if apex + p.past_apex_m - approach >= p.min_length_m:
+            done = end if p.finish_at_exit else apex + p.past_apex_m
+            spans.append(("braking", approach, max(done, apex + p.past_apex_m), 0.0))
+        # Corner: turn-in (a little before the braking point ends) to the exit,
+        # starting half alongside on the inside or the outside.
+        if end - turn_in >= p.min_length_m:
+            spans.append(("corner_in", turn_in, end, side * p.corner_shift_m))
+            spans.append(("corner_out", turn_in, end, -side * p.corner_shift_m))
         out += [
             Section(
                 track,
@@ -132,11 +138,10 @@ def track_sections(
                 brake % lap,
                 apex % lap,
                 side,
-                float(shift_m),
-                float(gap_m),
+                shift_m,
+                p.corner_gap_m if shift_m else 0.0,
             )
-            for kind, start, stop, shift_m, gap_m in spans
-            if stop - start >= p.min_length_m
+            for kind, start, stop, shift_m in spans
         ]
     return out
 

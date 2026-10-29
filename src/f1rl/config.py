@@ -278,6 +278,12 @@ class SectionParams:
     corner_shift_m: float = 3.0
     # Sections shorter than this are left out (no room for a pass).
     min_length_m: float = 80.0
+    # True: straight and braking battles must be won by the corner's exit (as corner
+    # battles), not by the braking point / just past the apex. A pass set up on a
+    # straight is finished in the braking zone; one started under braking is
+    # finished through the corner. With False, even a car 30% down on grip was
+    # passed in only 7 of 90 validation sections (checked 2026-10-29).
+    finish_at_exit: bool = False
 
 
 @dataclass(frozen=True)

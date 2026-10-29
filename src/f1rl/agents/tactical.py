@@ -41,10 +41,18 @@ from f1rl.agents.ppo import git_sha
 from f1rl.agents.racer import prepare_tracks, resolve_track_names
 from f1rl.agents.tactician import choose
 from f1rl.agents.tactics import MOVES
-from f1rl.config import EXAMPLE_CAR, CarParams, GuardParams, RaceEnvParams, SimParams
+from f1rl.config import (
+    EXAMPLE_CAR,
+    CarParams,
+    GuardParams,
+    RaceEnvParams,
+    SectionParams,
+    SimParams,
+)
 from f1rl.envs.tactical_env import TacticalEnv
 from f1rl.real_starts import ROLES, RealStart, by_track, load_real_starts
-from f1rl.scenarios import SCENARIOS, run_one, run_real
+from f1rl.scenarios import SCENARIOS, pick, run_one, run_real
+from f1rl.sections import KINDS, Section, env_sections, section_options
 
 
 @dataclass(frozen=True)
@@ -88,6 +96,18 @@ class TacticalRun:
     # uses several cores. Self-play needs the envs in this process (the rival pool
     # lives here), so subproc runs must set rival_frac 0.
     subproc: bool = False
+    # Section battles (`f1rl.sections`): this share of training episodes is one
+    # straight, braking zone or corner of a training track, started ``section_gap_m``
+    # behind one of ``section_opponents`` (a slower car); the pass must be done by
+    # the section's end. With ``section_priority`` the sections this env loses most
+    # are drawn more often (win rate tracked per section). Evaluations also run every
+    # validation-track section against each of ``section_eval_opponents``.
+    section_frac: float = 0.0
+    section_opponents: list[str] = field(default_factory=lambda: ["slow"])
+    section_gap_m: list[float] = field(default_factory=lambda: [6.0, 20.0])
+    section_priority: bool = True
+    section_eval_opponents: list[str] = field(default_factory=list)
+    section_eval_gap_m: float = 12.0
 
 
 @dataclass(frozen=True)
@@ -97,6 +117,10 @@ class TacticalConfig:
     env: dict[str, Any] = field(default_factory=dict)  # RaceEnvParams overrides
     ppo: dict[str, Any] = field(default_factory=dict)  # PPO(...) keyword args
     policy: dict[str, Any] = field(default_factory=dict)  # policy_kwargs
+    sections: dict[str, Any] = field(default_factory=dict)  # SectionParams overrides
+
+    def section_params(self) -> SectionParams:
+        return SectionParams(**self.sections)
 
     def env_params(self) -> RaceEnvParams:
         overrides = dict(self.env)
@@ -132,7 +156,9 @@ def load_tactical_config(path: Path) -> TacticalConfig:
         env=raw.get("env") or {},
         ppo=raw.get("ppo") or {},
         policy=raw.get("policy") or {},
+        sections=raw.get("sections") or {},
     )
+    config.section_params()
     config.env_params()
     config.sim_params(0)
     return config
@@ -170,8 +196,15 @@ class MultiTrackTactical(gym.Env[Any, Any]):
         real_frac: float = 0.0,
         pool: RivalPool | None = None,
         rival_frac: float = 0.0,
+        sections: dict[str, list[Section]] | None = None,
+        run: "TacticalRun | None" = None,
     ) -> None:
         self.envs = envs
+        self.sections = sections or {}
+        self.section_run = run
+        # Per-section win rate (exponential average), for prioritised sampling.
+        self.section_wins: dict[str, float] = {}
+        self._section: Section | None = None
         self.starts = starts or {}
         self.real_frac = real_frac
         self.pool = pool
@@ -200,6 +233,20 @@ class MultiTrackTactical(gym.Env[Any, Any]):
             and self.np_random.random() < self.rival_frac
         )
         opts: dict[str, Any] | None = None
+        self._section = None
+        run = self.section_run
+        secs = self.sections.get(self._current, [])
+        if run is not None and secs and self.np_random.random() < run.section_frac:
+            self._section = self._pick_section(secs, run)
+            opp = run.section_opponents[
+                int(self.np_random.integers(len(run.section_opponents)))
+            ]
+            gap = float(self.np_random.uniform(*run.section_gap_m))
+            obs, info = env.reset(
+                seed=int(self.np_random.integers(2**31 - 1)),
+                options=section_options(self._section, opp, gap),
+            )
+            return obs, info
         if here and self.np_random.random() < self.real_frac:
             start = here[int(self.np_random.integers(len(here)))]
             opts = start.options()
@@ -217,8 +264,48 @@ class MultiTrackTactical(gym.Env[Any, Any]):
         )
         return obs, info
 
+    def _pick_section(self, secs: list[Section], run: "TacticalRun") -> Section:
+        if not run.section_priority:
+            return secs[int(self.np_random.integers(len(secs)))]
+        # Sections lost more often are drawn more often; every one keeps a chance.
+        w = np.array([1.05 - self.section_wins.get(x.name, 0.5) for x in secs])
+        return secs[int(self.np_random.choice(len(secs), p=w / w.sum()))]
+
     def step(self, action: Any) -> tuple[Any, float, bool, bool, dict[str, Any]]:
-        return self.envs[self._current].step(action)
+        out = self.envs[self._current].step(action)
+        if self._section is not None and (out[2] or out[3]):
+            info = out[4]
+            won = float(section_won(info))
+            key = self._section.name
+            self.section_wins[key] = 0.8 * self.section_wins.get(key, 0.5) + 0.2 * won
+            self._section = None
+        return out
+
+
+def section_won(info: dict[str, Any]) -> bool:
+    """A section battle is won: ahead at the section's end, the pass stuck, clean."""
+    clean = not info["contact"] and not info["off_track"]
+    return bool(info["section_won"] and info["passes"] >= 1 and clean)
+
+
+def section_battle(
+    env: TacticalEnv, policy: Any, sec: Section, opponent: str, gap_m: float
+) -> dict[str, Any]:
+    """One deterministic section battle (see `f1rl.sections`)."""
+    obs, info = env.reset(seed=0, options=section_options(sec, opponent, gap_m))
+    for _ in range(2000):
+        obs, _, term, trunc, info = env.step(pick(env, obs, policy))
+        if term or trunc:
+            break
+    return {
+        "won": section_won(info),
+        "ahead_at_end": bool(info["section_won"]),
+        "passes": int(info["passes"]),
+        "contact": bool(info["contact"]),
+        "off": bool(info["off_track"]),
+        "interventions": int(info["interventions"]),
+        "elapsed_s": float(info["elapsed_s"]),
+    }
 
 
 def spread(items: list[RealStart], n: int) -> list[RealStart]:
@@ -229,7 +316,12 @@ def spread(items: list[RealStart], n: int) -> list[RealStart]:
 
 
 def clone_tactician(
-    model: PPO, envs: dict[str, TacticalEnv], decisions: int, epochs: int, seed: int
+    model: PPO,
+    envs: dict[str, TacticalEnv],
+    decisions: int,
+    epochs: int,
+    seed: int,
+    multi: MultiTrackTactical | None = None,
 ) -> float:
     """Train ``model``'s policy to pick the moves the rule-based tactician picks.
     Returns the final share of decisions it now agrees with."""
@@ -238,14 +330,21 @@ def clone_tactician(
     obs_list: list[Any] = []
     act_list: list[int] = []
     while len(obs_list) < decisions:
-        env = envs[names[int(rng.integers(len(names)))]]
-        obs, _ = env.reset(seed=int(rng.integers(2**31 - 1)))
+        if multi is not None:  # the training mix (sections, real starts)
+            obs, _ = multi.reset(seed=int(rng.integers(2**31 - 1)))
+            env = multi.envs[multi._current]
+        else:
+            env = envs[names[int(rng.integers(len(names)))]]
+            obs, _ = env.reset(seed=int(rng.integers(2**31 - 1)))
         done = False
         while not done and len(obs_list) < decisions:
             move = MOVES.index(choose(env))
             obs_list.append(obs)
             act_list.append(move)
-            obs, _, terminated, truncated, _ = env.step(move)
+            if multi is not None:
+                obs, _, terminated, truncated, _ = multi.step(move)
+            else:
+                obs, _, terminated, truncated, _ = env.step(move)
             done = terminated or truncated
     x = torch.as_tensor(np.array(obs_list), dtype=torch.float32)
     y = torch.as_tensor(act_list, dtype=torch.long)
@@ -290,8 +389,14 @@ class ScenarioCallback(BaseCallback):
         eval_every_steps: int,
         real_envs: dict[str, TacticalEnv] | None = None,
         starts: dict[str, list[RealStart]] | None = None,
+        sections: dict[str, list[Section]] | None = None,
+        section_opponents: list[str] | None = None,
+        section_gap_m: float = 12.0,
     ) -> None:
         super().__init__()
+        self.sections = sections or {}
+        self.section_opponents = section_opponents or []
+        self.section_gap_m = section_gap_m
         self.run_dir = run_dir
         self.envs = envs
         self.real_envs = real_envs or {}
@@ -343,6 +448,24 @@ class ScenarioCallback(BaseCallback):
                         sum(r["contact"] for r in res),
                     )
                 )
+        sec_rows = [
+            (sec.kind, section_battle(self.real_envs[name], self.model, sec, o, g))
+            for name, secs in self.sections.items()
+            for sec in secs
+            for o in self.section_opponents
+            for g in (self.section_gap_m,)
+        ]
+        for kind in KINDS:
+            res = [r for k, r in sec_rows if k == kind]
+            if res:
+                rows.append(
+                    (
+                        f"sec_{kind}",
+                        sum(r["won"] for r in res),
+                        len(res),
+                        sum(r["contact"] for r in res),
+                    )
+                )
         with (self.run_dir / "eval.csv").open("a", newline="") as f:
             w = csv.writer(f)
             for row in rows:
@@ -382,6 +505,7 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
                 "env": config.env,
                 "ppo": config.ppo,
                 "policy": config.policy,
+                "sections": config.sections,
             },
             sort_keys=False,
         ),
@@ -445,6 +569,19 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
         )
 
     pool = RivalPool(run.pool_size)
+    train_secs: dict[str, list[Section]] = {}
+    val_secs: dict[str, list[Section]] = {}
+    if run.section_frac > 0 or run.section_eval_opponents:
+        sp = config.section_params()
+        probe = make_envs(train_names + val_names, "random", run.seed)
+        train_secs = {n: env_sections(probe[n], sp) for n in train_names}
+        if run.section_eval_opponents:
+            val_secs = {n: env_sections(probe[n], sp) for n in val_names}
+        print(
+            f"Sections: {sum(map(len, train_secs.values()))} on the training tracks, "
+            f"{sum(map(len, val_secs.values()))} on the validation tracks",
+            flush=True,
+        )
 
     def make_multi(i: int) -> Callable[[], MultiTrackTactical]:
         def _make() -> MultiTrackTactical:
@@ -455,6 +592,8 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
                 run.real_start_frac,
                 pool,
                 run.rival_frac,
+                train_secs if run.section_frac > 0 else None,
+                run,
             )
 
         return _make
@@ -497,6 +636,7 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
             run.bc_decisions,
             run.bc_epochs,
             run.seed,
+            make_multi(20_000)() if run.section_frac > 0 else None,
         )
         print(
             f"Behaviour cloning: agrees with the tactician on {agree:.1%}", flush=True
@@ -505,8 +645,11 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
         run_dir,
         make_envs(val_names, "lap", run.seed + 30_000),
         run.eval_every_steps,
-        make_envs(list(val_starts), "random", run.seed + 40_000),
+        make_envs(sorted(set(val_starts) | set(val_secs)), "random", run.seed + 40_000),
         val_starts,
+        val_secs,
+        run.section_eval_opponents,
+        run.section_eval_gap_m,
     )
     callbacks: list[BaseCallback] = [callback]
     if run.rival_frac > 0:

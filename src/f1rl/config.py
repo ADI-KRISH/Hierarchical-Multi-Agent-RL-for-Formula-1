@@ -257,6 +257,24 @@ class GuardParams:
 
 
 @dataclass(frozen=True)
+class SectionParams:
+    """How `f1rl.sections` cuts a track into overtaking sections (design choices, in
+    metres along the track)."""
+
+    # Braking-zone battles start this far before the braking point.
+    approach_m: float = 200.0
+    # ...and must be won by this far past the apex.
+    past_apex_m: float = 30.0
+    # Corner battles start this share of the way from the braking point to the apex
+    # (the turn-in) and end this far past the apex (the exit), or at the top of the
+    # ramp out of the corner if sooner. Straights start at the previous exit.
+    turn_in_frac: float = 0.5
+    corner_exit_m: float = 150.0
+    # Sections shorter than this are left out (no room for a pass).
+    min_length_m: float = 80.0
+
+
+@dataclass(frozen=True)
 class RaceEnvParams:
     """Tunables for `RaceEnv` (env v2: the car steers, so it chooses its line).
 
@@ -416,6 +434,15 @@ class RaceEnvParams:
     safety_filter: bool = False
     # The defending sparring driver's settings (``guard_*`` opponents).
     guard: GuardParams = GuardParams()
+    # Section battles (`f1rl.sections`, reset option ``section_m``): the pass must be
+    # done (our car ahead) within ``section_m`` of the start. Then the battle goes on
+    # until the pass has stuck (`pass_hold_m`, plus `section_tail_m` of slack), and
+    # ends at once if we are still behind. Ahead at the section's end pays
+    # `section_win_bonus`; still behind costs `section_fail_penalty`. 0 = off; no
+    # effect on battles without ``section_m``.
+    section_win_bonus: float = 0.0
+    section_fail_penalty: float = 0.0
+    section_tail_m: float = 100.0
     safety_horizon_s: float = 2.5  # was 1.5; 1.5 s missed side-by-side corner entries
     safety_max_horizon_s: float = 3.0
     safety_dt_s: float = 0.05

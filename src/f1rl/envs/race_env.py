@@ -136,6 +136,8 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         self._since_m = 0.0  # metres driven since the order last changed
         self._passes = 0
         self._swaps = 0  # every change of order, stuck or not
+        self._section_m: float | None = None  # a section battle's length
+        self._section_done = self._section_won = False
         self._contact = False
         self._grip = 1.0
         self._plan_grip = 1.0
@@ -395,6 +397,9 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             )
         self._opp, self._passes, self._contact = None, 0, False
         self._swaps, self._since_m = 0, 0.0
+        section = opts.get("section_m")
+        self._section_m = None if section is None else float(section)
+        self._section_done = self._section_won = False
         self._interventions = self._opp_interventions = 0
         self._grip = self._plan_grip = (
             tire_grip(self.tire, self._wear) if p.tires else 1.0
@@ -609,7 +614,21 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         budget = (
             p.episode_s / dt if self.mode == "random" else self.sim.max_episode_steps
         )
-        truncated = not terminated and self._steps >= budget
+        section_over = False
+        if self._section_m is not None and opp is not None and not terminated:
+            # A section battle (`f1rl.sections`): ahead by the section's end, or out.
+            progress = self._state.s_m - self._start_s
+            if not self._section_done and progress >= self._section_m:
+                self._section_done, self._section_won = True, self._ahead
+                if self._ahead:
+                    total += p.section_win_bonus
+                else:
+                    total -= p.section_fail_penalty
+                    section_over = True
+            tail = self._section_m + p.pass_hold_m + p.section_tail_m
+            if self._section_done and (self._passes >= 1 or progress >= tail):
+                section_over = True
+        truncated = not terminated and (self._steps >= budget or section_over)
         info.update(self._info(off_track=off_track, lap_completed=lap_completed))
         info["advanced_m"] = self._state.s_m - start_s
         return self._observation(), total, terminated, truncated, info
@@ -648,6 +667,8 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             "elapsed_s": self._steps * self.sim.dt_s,
             "off_track": off_track,
             "lap_completed": lap_completed,
+            "section_done": self._section_done,
+            "section_won": self._section_won,
         }
 
     def _observation(self) -> ObsType:

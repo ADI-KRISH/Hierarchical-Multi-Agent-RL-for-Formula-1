@@ -32,6 +32,8 @@ from f1rl.config import GRAVITY_M_S2, CarParams
 from f1rl.models.frenet import FrenetState, frenet_step, map_action
 
 Command = tuple[float, float]  # (throttle/brake, steer) in [-1, 1]
+#: `SafetyCheck.lift_first`: pedal commands tried first by a car with one ahead.
+LIFT_PEDALS = (0.0, -0.3)
 Pace = Callable[[float], float] | None  # a car's planned speed (m/s) at distance s
 
 
@@ -52,6 +54,9 @@ class SafetyCheck:
     speed_floor_ms: float
     steer: float  # how much steer the "steer away" candidates add
     brake: float  # braking command of the "brake" candidates
+    # A car with the other one ahead first tries lifting off, then a light brake
+    # (`LIFT_PEDALS`), before the hard "brake" candidates. False = earlier runs.
+    lift_first: bool = False
 
 
 def wrap(gap_m: float, lap_m: float) -> float:
@@ -184,7 +189,11 @@ def candidates(
     stop = (brake(eased, 1.0), eased)
     other_ahead = wrap(other.s_m - me.s_m, check.lap_m) > check.car_length_m / 2
     if other_ahead:
+        lift = [(min(u_long, x), u_lat) for x in LIFT_PEDALS]
+        if not check.lift_first:
+            lift = []
         return [
+            *lift,
             (soft, u_lat),
             (full, u_lat),
             (soft_away, steer),

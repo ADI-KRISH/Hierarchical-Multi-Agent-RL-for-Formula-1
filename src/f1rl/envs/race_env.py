@@ -167,6 +167,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             speed_floor_ms=p.min_speed_ms,
             steer=p.safety_steer,
             brake=p.safety_brake,
+            lift_first=p.safety_lift_first,
         )
         self._tow_now = 0.0
         if p.opponents:

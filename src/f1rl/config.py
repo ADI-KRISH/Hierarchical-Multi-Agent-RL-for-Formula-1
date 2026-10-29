@@ -495,6 +495,11 @@ class RaceEnvParams:
     safety_check_m: float = 80.0
     safety_steer: float = 0.8  # was 0.4: too little to turn away from full lock
     safety_brake: float = 0.8
+    # The filter slows a car behind by lifting off (then braking lightly) before it
+    # tries braking hard (`SafetyCheck.lift_first`). False = earlier runs. With it
+    # off, the filter braked our car at ~4 g with a slower car 9 m ahead pulling
+    # away out of a corner (checked 2026-10-29), so a pass could rarely be set up.
+    safety_lift_first: bool = False
     # Real starts (`f1rl.real_starts`): a gap given in seconds is turned into metres
     # at the racing line's speed where the scenario starts, then kept in this range
     # (a car length plus a little, up to where the tactician starts an attack).

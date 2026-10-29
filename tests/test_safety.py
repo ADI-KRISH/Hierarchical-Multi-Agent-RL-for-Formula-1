@@ -255,3 +255,18 @@ def _contacts(env: RaceEnv, episodes: int) -> int:
 def test_with_the_filter_even_a_reckless_driver_never_hits_anyone() -> None:
     assert _contacts(_race_env(safety=False), 20) > 0  # the test can fail...
     assert _contacts(_race_env(safety=True), 20) == 0  # ...and the filter stops it
+
+
+def test_lift_first_lifts_before_braking_hard() -> None:
+    me = FrenetState(100.0, 0.0, 0.0, 60.0)
+    ahead = FrenetState(109.0, 0.0, 0.0, 60.0)  # 9 m ahead, same speed
+    lift = dataclasses.replace(CHECK, lift_first=True)
+    first = candidates((1.0, 0.0), me, ahead, lift)[:2]
+    assert first == [(0.0, 0.0), (-0.3, 0.0)]
+    assert candidates((1.0, 0.0), me, ahead, CHECK)[0][0] <= -0.8  # earlier runs
+    # Flat out into a car 9 m ahead at the same speed: lifting is enough.
+    cmd, hit = safe_command(
+        EXAMPLE_CAR, me, (1.0, 0.0), EXAMPLE_CAR, ahead, (0.0, 0.0),
+        _straight, _wide, lift,
+    )
+    assert hit and cmd[0] >= -0.3

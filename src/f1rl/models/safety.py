@@ -59,6 +59,11 @@ class SafetyCheck:
     # A car with the other one ahead first tries lifting off, then a light brake
     # (`LIFT_PEDALS`), before the hard "brake" candidates. False = earlier runs.
     lift_first: bool = False
+    # The "heading off the road beside the other car" swap only while the cars
+    # really overlap along the track (side by side). False = earlier runs: also a
+    # car lined up several metres behind, where the crude lane-keeping fallback
+    # "sees" a flat-out car run wide on a curving straight and gets braked.
+    edge_overlap_only: bool = False
 
 
 def wrap(gap_m: float, lap_m: float) -> float:
@@ -286,6 +291,9 @@ def safe_command(
         # nowhere near anyone.
         if edge > 0.0 or worst > check.car_length_m:
             return command, False
+        along = abs(wrap(other.s_m - me.s_m, check.lap_m))
+        if check.edge_overlap_only and along > check.car_length_m + check.margin_s_m:
+            return command, False  # not beside it: nothing to come back across
         # Clear of the other car but heading off the road beside it: a car that
         # leaves the track next to another one tends to come back across it, so
         # take a replacement that stays on the road, if one is just as clear.

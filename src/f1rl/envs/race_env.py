@@ -168,6 +168,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             steer=p.safety_steer,
             brake=p.safety_brake,
             lift_first=p.safety_lift_first,
+            edge_overlap_only=p.safety_edge_overlap_only,
         )
         self._tow_now = 0.0
         if p.opponents:

@@ -323,3 +323,29 @@ def test_with_nothing_clear_a_car_takes_the_most_room_even_off_the_road() -> Non
     )
     assert hit
     assert judge(cmd)[0] > max([judge(command)[0], *on_road])
+
+
+def test_edge_overlap_only_leaves_a_car_lined_up_behind_alone() -> None:
+    # 9 m behind on a tight bend at full throttle: the crude lane-keeping fallback
+    # runs wide, so the old rule swapped the command though nobody is beside it.
+    me = FrenetState(100.0, 0.0, 0.0, 70.0)
+    ahead = FrenetState(109.0, 0.0, 0.0, 70.0)
+
+    def bend(_s: float) -> float:
+        return 0.02
+
+    def run(check: SafetyCheck) -> tuple[tuple[float, float], bool]:
+        return safe_command(
+            EXAMPLE_CAR,
+            me,
+            (1.0, 0.0),
+            EXAMPLE_CAR,
+            ahead,
+            (1.0, 0.0),
+            bend,
+            _wide,
+            check,
+        )
+
+    loose = dataclasses.replace(CHECK, edge_overlap_only=True)
+    assert run(loose) == ((1.0, 0.0), False)

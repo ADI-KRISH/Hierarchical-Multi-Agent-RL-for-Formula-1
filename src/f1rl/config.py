@@ -510,6 +510,11 @@ class RaceEnvParams:
     # off, the filter braked our car at ~4 g with a slower car 9 m ahead pulling
     # away out of a corner (checked 2026-10-29), so a pass could rarely be set up.
     safety_lift_first: bool = False
+    # ...and keeps a car on the road beside the other one only while they overlap
+    # (`SafetyCheck.edge_overlap_only`). False = earlier runs. With it off, our car
+    # lined up 9 m behind on a curving straight was held back every few steps
+    # (checked 2026-10-29, Hockenheim T6).
+    safety_edge_overlap_only: bool = False
     # Real starts (`f1rl.real_starts`): a gap given in seconds is turned into metres
     # at the racing line's speed where the scenario starts, then kept in this range
     # (a car length plus a little, up to where the tactician starts an attack).

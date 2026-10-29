@@ -100,8 +100,9 @@ class TacticalRun:
     # straight, braking zone or corner of a training track, started ``section_gap_m``
     # behind one of ``section_opponents`` (a slower car); the pass must be done by
     # the section's end. With ``section_priority`` the sections this env wins only
-    # some of the time are drawn more often (win rate tracked per section). Evaluations also run every
-    # validation-track section against each of ``section_eval_opponents``.
+    # some of the time are drawn more often (win rate tracked per section).
+    # Evaluations also run every validation-track section against each of
+    # ``section_eval_opponents``.
     section_frac: float = 0.0
     section_opponents: list[str] = field(default_factory=lambda: ["slow"])
     section_gap_m: list[float] = field(default_factory=lambda: [6.0, 20.0])
@@ -241,7 +242,8 @@ class MultiTrackTactical(gym.Env[Any, Any]):
             opp = run.section_opponents[
                 int(self.np_random.integers(len(run.section_opponents)))
             ]
-            gap = float(self.np_random.uniform(*run.section_gap_m))
+            lo, hi = run.section_gap_m
+            gap = float(self.np_random.uniform(lo, hi))
             obs, info = env.reset(
                 seed=int(self.np_random.integers(2**31 - 1)),
                 options=section_options(self._section, opp, gap),

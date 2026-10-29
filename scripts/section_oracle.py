@@ -25,7 +25,9 @@ from f1rl.sections import KINDS, Section, env_sections, section_options
 WAITS = (0, 3, 6, 10)
 
 
-def try_plan(env: Any, sec: Section, opp: str, gap: float, move: int, wait: int) -> bool:
+def try_plan(
+    env: Any, sec: Section, opp: str, gap: float, move: int, wait: int
+) -> bool:
     env.reset(seed=0, options=section_options(sec, opp, gap))
     info: dict[str, Any] = {}
     for k in range(2000):
@@ -66,11 +68,18 @@ def main() -> None:
                     if plan:
                         break
                 rows.append({**sec.as_dict(), "opponent": opp, "plan": plan})
-        print(name, sum(r["plan"] is not None for r in rows if r["track"] == name),
-              "/", sum(r["track"] == name for r in rows), flush=True)
+        print(
+            name,
+            sum(r["plan"] is not None for r in rows if r["track"] == name),
+            "/",
+            sum(r["track"] == name for r in rows),
+            flush=True,
+        )
     for kind in KINDS:
         sel = [r for r in rows if r["kind"] == kind]
-        print(f"{kind:10} passable {sum(r['plan'] is not None for r in sel)}/{len(sel)}")
+        print(
+            f"{kind:10} passable {sum(r['plan'] is not None for r in sel)}/{len(sel)}"
+        )
     if args.out:
         args.out.write_text(json.dumps(rows, indent=2), encoding="utf-8")
 

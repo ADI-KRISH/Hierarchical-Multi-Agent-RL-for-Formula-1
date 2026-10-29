@@ -109,36 +109,35 @@ def track_sections(
         prev_apex = corners[i - 1][1] * ds_m
         if prev_apex >= apex:
             prev_apex -= lap
-        def add(
-            kind: str, start: float, end: float, shift: float = 0.0, gap: float = 0.0
-        ) -> None:
-            if end - start >= p.min_length_m:
-                out.append(
-                    Section(
-                        track,
-                        i,
-                        kind,
-                        start % lap,
-                        end - start,
-                        brake % lap,
-                        apex % lap,
-                        side,
-                        shift,
-                        gap,
-                    )
-                )
-
+        spans: list[tuple[str, float, float, float, float]] = []
         # Straight: from the previous apex (the exit is where a quicker car gains)
         # to the braking point (the pass must be done by then).
-        add("straight", prev_apex + p.straight_from_apex_m, brake)
+        spans.append(("straight", prev_apex + p.straight_from_apex_m, brake, 0, 0))
         # Braking zone: the approach to the braking point to just past the apex.
         approach = max(brake - p.approach_m, prev_apex + p.straight_from_apex_m)
-        add("braking", approach, apex + p.past_apex_m)
+        spans.append(("braking", approach, apex + p.past_apex_m, 0, 0))
         # Corner: turn-in (a little before the braking point ends) to the exit.
         turn_in = max(brake + p.turn_in_frac * (apex - brake), approach)
         end = min(apex + p.corner_exit_m, max(top, apex + 60.0))
-        add("corner_in", turn_in, end, side * p.corner_shift_m, p.corner_gap_m)
-        add("corner_out", turn_in, end, -side * p.corner_shift_m, p.corner_gap_m)
+        shift, gap = side * p.corner_shift_m, p.corner_gap_m
+        spans.append(("corner_in", turn_in, end, shift, gap))
+        spans.append(("corner_out", turn_in, end, -shift, gap))
+        out += [
+            Section(
+                track,
+                i,
+                kind,
+                start % lap,
+                stop - start,
+                brake % lap,
+                apex % lap,
+                side,
+                float(shift_m),
+                float(gap_m),
+            )
+            for kind, start, stop, shift_m, gap_m in spans
+            if stop - start >= p.min_length_m
+        ]
     return out
 
 

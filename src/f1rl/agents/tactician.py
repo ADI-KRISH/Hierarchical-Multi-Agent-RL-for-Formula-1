@@ -55,11 +55,11 @@ def choose(env: TacticalEnv) -> str:
             t = max(0.0, room - 100.0) / max(me.speed_ms, 1.0)
             if gap - closing * t <= OVERLAP_BY_BRAKING_M:
                 return "dummy" if room >= FEINT_ROOM_M else "divebomb"
-        if "pull_in" in env.moves and gap < PULL_GAP_M:
-            # Right behind it with the braking point (or the corner) too near for a
-            # planned move, or stuck in its tow: pull alongside now, inside first.
-            if (corners and room < MIN_ROOM_M) or env._tow_now > 0:
-                return "pull_in"
+        # Right behind it with the braking point (or the corner) too near for a
+        # planned move, or stuck in its tow: pull alongside now, inside first.
+        near = bool(corners) and room < MIN_ROOM_M
+        if "pull_in" in env.moves and gap < PULL_GAP_M and (near or env._tow_now > 0):
+            return "pull_in"
         if corners and room < MIN_ROOM_M and len(corners) > 1:
             return "switchback"
         return "line"

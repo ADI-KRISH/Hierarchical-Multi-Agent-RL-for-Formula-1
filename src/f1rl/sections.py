@@ -118,7 +118,8 @@ def track_sections(
         # to the braking point (the pass must be done by then, or by the exit).
         straight = prev_apex + p.straight_from_apex_m
         if brake - straight >= p.min_length_m:
-            spans.append(("straight", straight, end if p.finish_at_exit else brake, 0.0))
+            done = end if p.finish_at_exit else brake
+            spans.append(("straight", straight, done, 0.0))
         # Braking zone: the approach to the braking point to just past the apex.
         if apex + p.past_apex_m - approach >= p.min_length_m:
             done = end if p.finish_at_exit else apex + p.past_apex_m

@@ -88,6 +88,9 @@ class TacticalRun:
     # uses several cores. Self-play needs the envs in this process (the rival pool
     # lives here), so subproc runs must set rival_frac 0.
     subproc: bool = False
+    # Defender training (`agents.defender_rl`): battles per validation track (from
+    # this many points round the lap) at every evaluation.
+    eval_starts: int = 6
 
 
 @dataclass(frozen=True)
@@ -110,6 +113,7 @@ class TacticalConfig:
             "opponent_gap_m",
             "real_gap_m",
             "pass_window_m",
+            "tactical_moves",
         ):
             if key in overrides:
                 overrides[key] = tuple(overrides[key])

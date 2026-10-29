@@ -48,7 +48,11 @@ class TacticalEnv(RaceEnv):
             raise ValueError("TacticalEnv needs RaceEnvParams(tactical=True)")
         super().__init__(car, track, sim, params, reference, mode)
         self.option_steps = option_steps
-        self.action_space = gym.spaces.Discrete(len(MOVES))
+        unknown = set(params.tactical_moves) - set(MOVES)
+        if unknown:
+            raise ValueError(f"unknown tactical_moves: {sorted(unknown)}")
+        self.moves: tuple[str, ...] = params.tactical_moves or MOVES
+        self.action_space = gym.spaces.Discrete(len(self.moves))
         n = self.observation_space.shape[0]  # type: ignore[index]
         self.observation_space = gym.spaces.Box(
             -5.0, 5.0, (n + len(MOVES) + 2,), np.float32
@@ -107,11 +111,19 @@ class TacticalEnv(RaceEnv):
             )
         return a
 
-    def _may_change(self, corners: list[Any]) -> bool:
-        """Free to start a new move: not in a braking zone, none in progress."""
+    def _may_change(self, corners: list[Any], want: str = "line") -> bool:
+        """Free to start a new move: not in a braking zone, none in progress; with
+        `RaceEnvParams.defend_rules`, no cover or inside across a close car's nose."""
         in_zone = bool(corners) and corners[0].brake_m < NO_MOVE_BRAKE_M
         running = self._maneuver is not None and self._state.s_m < self._maneuver.end_s
-        return not in_zone and not (running and self._move == "cover")
+        if in_zone or (running and self._move == "cover"):
+            return False
+        p, opp = self.params, self._opp
+        if p.defend_rules and want in ("cover", "inside") and opp is not None:
+            behind = -wrap_gap(opp.state.s_m - self._state.s_m, self._lap_m)
+            if 0.0 < behind < p.car_length_m + p.guard.min_move_gap_m:
+                return False
+        return True
 
     def rival_observation(self) -> ObsType:
         """What the opponent car sees: our observation with the two cars swapped."""
@@ -127,13 +139,36 @@ class TacticalEnv(RaceEnv):
             opp.state, self._state = self._state, mine[0]
             self._last, self._move, self._tow_now = mine[1], mine[2], mine[3]
 
+    def _tactician_for_rival(self) -> str:
+        """The rule-based tactician's move for the opponent, from its side: the two
+        cars (and their running moves) swapped while it looks."""
+        from f1rl.agents.tactician import choose  # here: tactician imports this env
+
+        opp = self._opp
+        assert opp is not None
+        mine = (self._state, self._maneuver, self._move, self._tow_now)
+        self._state, opp.state = opp.state, self._state
+        self._maneuver, self._move = opp.maneuver, self._opp_move
+        self._tow_now = self._tow(self._state, opp.state)
+        try:
+            return choose(self)
+        finally:
+            opp.state, self._state = self._state, mine[0]
+            self._maneuver, self._move, self._tow_now = mine[1], mine[2], mine[3]
+
     def _rival_move(self) -> None:
         """Self-play: the rival policy picks the opponent's move, under the same rules
-        as ours (no new move in a braking zone, a cover is a single move)."""
+        as ours (no new move in a braking zone, a cover is a single move). A
+        ``rival_tactician*`` car is driven by the rule-based tactician instead."""
         opp = self._opp
-        if self.rival is None or opp is None or not opp.kind.startswith("rival"):
+        if opp is None or not opp.kind.startswith("rival"):
             return
-        want = MOVES[int(self.rival(self.rival_observation()))]
+        if opp.kind.startswith("rival_tactician"):
+            want = self._tactician_for_rival()
+        elif self.rival is None:
+            return
+        else:
+            want = MOVES[int(self.rival(self.rival_observation()))]
         s = opp.state.s_m
         running = opp.maneuver is not None and s < opp.maneuver.end_s
         if want == self._opp_move and running:
@@ -151,12 +186,18 @@ class TacticalEnv(RaceEnv):
 
     def step(self, action: Any) -> tuple[ObsType, float, bool, bool, dict[str, Any]]:
         self._rival_move()
-        want = MOVES[int(action)]
+        want = self.moves[int(action)]
         d = self._driver()
         s = self._state.s_m
         corners = corners_ahead(d, s)
         if want != self._move or self._maneuver is None or s > self._maneuver.end_s:
-            if self._may_change(corners) or self._maneuver is None:
+            allowed = self._may_change(corners, want)
+            if not allowed and self._maneuver is None:
+                if self.params.defend_rules:  # refused: start on the racing line
+                    self.refused += 1
+                    want = "line"
+                allowed = True
+            if allowed:
                 shift = self._state.n_m - d.base.line_state(s)[0]
                 threat = 0.0
                 if self._opp is not None:

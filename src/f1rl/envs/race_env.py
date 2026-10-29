@@ -62,6 +62,11 @@ ObsType = NDArray[np.float32]
 ActType = NDArray[np.float32]
 
 
+#: Moving sideways toward the other car faster than this (m/s) counts as cutting
+#: across it (a chop), when just in front of its nose.
+CHOP_LAT_MS = 0.3
+
+
 class RaceEnv(gym.Env[ObsType, ActType]):
     def __init__(
         self,
@@ -592,7 +597,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                     total -= p.fail_penalty
                     terminated = True
                     break
-                why = self._too_close(opp.state, now)
+                why = self._too_close(opp.state, now, (now.n_m - before.n_m) / dt)
                 if why:
                     self._dirty_steps += 1
                     self._dirty[why] += 1
@@ -675,10 +680,13 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         info["advanced_m"] = self._state.s_m - start_s
         return self._observation(), total, terminated, truncated, info
 
-    def _too_close(self, opp: FrenetState, me: FrenetState) -> str:
+    def _too_close(
+        self, opp: FrenetState, me: FrenetState, my_lat_ms: float = 0.0
+    ) -> str:
         """Closer than clean racing allows (`RaceEnvParams.clean_side_m` etc.):
-        side by side with less air than ``clean_side_m`` between the cars, ahead in
-        its lane less than ``clean_chop_m`` in front of its nose (a chop), or behind
+        side by side with less air than ``clean_side_m`` between the cars, moving
+        (``my_lat_ms``, m/s sideways) across into its lane less than ``clean_chop_m``
+        in front of its nose (a chop; a car that tucks in behind us is not), or behind
         in its lane less than ``clean_follow_m`` off its gearbox. Returns which
         ("side", "chop", "follow") or "" if clean."""
         p = self.params
@@ -691,7 +699,10 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             return ""
         if gap > 0:
             return "follow" if nose_air < p.clean_follow_m else ""
-        return "chop" if nose_air < p.clean_chop_m else ""
+        toward = my_lat_ms * (1.0 if opp.n_m > me.n_m else -1.0)
+        if toward > CHOP_LAT_MS and nose_air < p.clean_chop_m:
+            return "chop"
+        return ""
 
     def _opponent_features(self, opp: Opponent) -> NDArray[np.float32]:
         """See `RaceEnvParams.opponent_features`."""

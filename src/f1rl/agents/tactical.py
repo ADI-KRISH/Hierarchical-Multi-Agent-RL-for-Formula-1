@@ -313,6 +313,7 @@ def section_battle(
         "off": bool(info["off_track"]),
         "interventions": int(info["interventions"]),
         "rescues": int(info["rescues"]),
+        "my_rescues": int(info["my_rescues"]),
         "elapsed_s": float(info["elapsed_s"]),
     }
 

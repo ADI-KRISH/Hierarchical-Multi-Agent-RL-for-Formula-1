@@ -144,6 +144,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         self._interventions = 0  # times the safety filter changed our command
         self._opp_interventions = 0  # ...and the opponent's
         self._rescues = 0  # filter steps (either car) while wheel to wheel
+        self._my_rescues = 0  # ...of them, on our car
         self._safety = SafetyCheck(
             lap_m=self._lap_m,
             car_length_m=p.car_length_m,
@@ -402,6 +403,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         self._opp, self._passes, self._contact = None, 0, False
         self._swaps, self._since_m = 0, 0.0
         self._interventions = self._opp_interventions = self._rescues = 0
+        self._my_rescues = 0
         self._grip = self._plan_grip = (
             tire_grip(self.tire, self._wear) if p.tires else 1.0
         )
@@ -551,6 +553,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                 if gap_now < p.car_length_m + p.rescue_margin_m:
                     new = self._interventions + self._opp_interventions - before_all
                     self._rescues += new
+                    self._my_rescues += self._interventions - before_hits
                     filter_cost += p.rescue_penalty * new
                 # Racing so close that the filter must step in costs reward, so the
                 # driver learns moves that need no rescue (GT Sophy penalises every
@@ -696,6 +699,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             "interventions": self._interventions,
             "opp_interventions": self._opp_interventions,
             "rescues": self._rescues,
+            "my_rescues": self._my_rescues,
             "elapsed_s": self._steps * self.sim.dt_s,
             "off_track": off_track,
             "lap_completed": lap_completed,

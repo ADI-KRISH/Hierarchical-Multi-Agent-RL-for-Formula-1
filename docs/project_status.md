@@ -246,3 +246,36 @@ against a slow guard (it runs round the outside of a car holding the inside), wh
 is the attacker's mistake to learn. 0 contacts against any guard in 480 battles.
 The guard's own "squeeze" counter (moving > 5 cm per 0.1 s toward a car alongside)
 is not quite zero: up to ~8 steps per 24 battles.
+
+### Corner-by-corner overtaking (2026-10-29, branch `claude/project-thread-gr40f3`)
+
+Each battle is one section (straight, braking zone, corner entry, corner exit)
+against a slower car (`slow`, or the defending `guard_slow`), scored strictly:
+a win needs a pass that sticks, with no contact, no off-track and no "dirty" steps
+(alongside too close, chopping across, tailgating). Run with
+`scripts/section_gate.py`; replay page with `scripts/section_demo.py`.
+
+Direct control (`configs/overtake_lanes.yaml`, `lane_moves: true`): every 0.5 s
+the driver picks left/right of the car ahead at 3.0 or 4.2 m, with normal or
+late braking, on top of the line/follow moves. The no-crash filter now tries a
+lift before braking (`safety_lift_first`).
+
+Training: PPO, 1M decisions, best checkpoint at 500k (25/180 on validation).
+
+Held-out (5 unseen tracks, 350 battles, model_best vs the scripted tactician):
+
+| section | model slow | model guard_slow | tactician slow | tactician guard_slow |
+|---|---|---|---|---|
+| straight | 3/49 | 4/49 | 3/49 | 5/49 |
+| braking | 1/66 | 9/66 | 4/66 | 11/66 |
+| corner entry | 2/17 | 6/17 | 1/17 | 7/17 |
+| corner exit | 0/43 | 5/43 | 0/43 | 4/43 |
+| total | 30/350 | | 35/350 | |
+
+0 contacts for both; 17 off-tracks each. Read: the trained driver matches the
+scripted one but does not beat it, and most battles end "still behind" at the
+section end. A brute-force oracle over the same moves reaches ~38/180 on
+validation, so the ceiling within one section is low in this sim: a single
+straight or corner is often too short to complete a clean pass on a car only
+slightly slower. Next: score passes over two or three sections (phase 2,
+combined battles).

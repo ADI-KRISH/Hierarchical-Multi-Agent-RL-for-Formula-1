@@ -22,7 +22,8 @@ used. A replacement takes a car off the road only to avoid a crash: when that is
 the only way to keep clear, or, if nothing keeps clear, when off the road leaves
 more room to the other car than any command on it. The car behind is filtered
 first, and the car ahead is then checked against what the car behind will really
-do. A command that keeps clear is never touched, so clean racing is left alone. Pure functions, no I/O, no globals.
+do. A command that keeps clear is never touched, so clean racing is left alone.
+Pure functions, no I/O, no globals.
 """
 
 import math

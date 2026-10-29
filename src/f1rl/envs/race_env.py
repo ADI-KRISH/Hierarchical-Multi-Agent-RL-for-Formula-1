@@ -720,6 +720,8 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         side_air = abs(opp.n_m - me.n_m) - p.car_width_m
         nose_air = abs(gap) - p.car_length_m
         if nose_air < 0.0:
+            if p.side_own_fault and my_lat_ms <= 0.0:
+                return ""  # not closing in: if anyone squeezed, it was the other car
             return "side" if side_air < p.clean_side_m else ""
         if side_air >= p.clean_side_m:
             return ""

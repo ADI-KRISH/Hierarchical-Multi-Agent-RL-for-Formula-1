@@ -7,6 +7,8 @@
 #   17/180 clean without drag, 23/180 with it (off-tracks 18 -> 9), 0 contacts.
 # - plan_features: the corner after next, metres left in the battle, and where the
 #   car ahead sits and how it moved over the last second.
+# - side_own_fault: side by side with < 0.5 m of air counts against us only while
+#   we close in. With the above, scripted driver: 23/180 clean.
 # Starts from overtake_multi's best model; the 5 new inputs start at zero weight.
 tactical: true
 
@@ -68,6 +70,7 @@ env:
   aero_drag: true
   tow_drag_cut: 0.12
   plan_features: true
+  side_own_fault: true   # a squeeze by the other car is not our dirty move
   path_edge_inset_m: 0.6
   track_limit_margin_m: 0.5
   commit_moves: false

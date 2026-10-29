@@ -509,6 +509,12 @@ class RaceEnvParams:
     clean_chop_m: float = 3.0
     clean_follow_m: float = 0.5
     dirty_penalty: float = 0.0
+    # Side by side, the "side" rule blames our car only while it is the one closing
+    # in (its own sideways step toward the other car, and the gap across shrinking).
+    # A car that squeezes us onto our own line is its fault, not a dirty move of
+    # ours. Checked 2026-10-29: of 43 "dirty" two-corner battles of the scripted
+    # driver, 20 ended ahead and 21 had "side" steps. False = earlier runs.
+    side_own_fault: bool = False
     # Tactical env: after a pass (or alongside), hold the current offset rather than
     # move back across into the other car's lane before clear of its nose by
     # `clean_chop_m` plus a car length (`TacticalEnv._no_chop`). False = earlier runs.

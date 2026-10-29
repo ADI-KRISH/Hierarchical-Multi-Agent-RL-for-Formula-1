@@ -103,4 +103,5 @@ def test_drag_fades_full_throttle_toward_top_speed_and_slows_a_coasting_car() ->
     coast = frenet_step(car, fast, 0.0, 0.0, _straight, 0.02, 10.0)
     assert (v_top - coast.speed_ms) / 0.02 == pytest.approx(a_max, rel=0.02)
     # No drag (the default): the speed holds when coasting.
-    assert frenet_step(EXAMPLE_CAR, fast, 0.0, 0.0, _straight, 0.02, 10.0).speed_ms == v_top
+    still = frenet_step(EXAMPLE_CAR, fast, 0.0, 0.0, _straight, 0.02, 10.0)
+    assert still.speed_ms == v_top

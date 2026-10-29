@@ -504,7 +504,6 @@ class ScenarioCallback(BaseCallback):
         self._evaluate()
 
 
-
 def load_grown(model: PPO, path: str) -> list[str]:
     """Load a saved policy into ``model``, whose observation may have grown: new
     inputs (appended at the end, e.g. `RaceEnvParams.plan_features`) get zero
@@ -516,8 +515,10 @@ def load_grown(model: PPO, path: str) -> list[str]:
     for key, old in saved.items():
         new = mine[key]
         if old.shape != new.shape:
-            if old.dim() != 2 or old.shape[0] != new.shape[0] or (
-                old.shape[1] > new.shape[1]
+            if (
+                old.dim() != 2
+                or old.shape[0] != new.shape[0]
+                or old.shape[1] > new.shape[1]
             ):
                 raise ValueError(f"{key}: {tuple(old.shape)} -> {tuple(new.shape)}")
             pad = new.new_zeros(new.shape)
@@ -527,6 +528,7 @@ def load_grown(model: PPO, path: str) -> list[str]:
         mine[key] = old
     model.policy.load_state_dict(mine)
     return grown
+
 
 def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -> PPO:
     run = config.run

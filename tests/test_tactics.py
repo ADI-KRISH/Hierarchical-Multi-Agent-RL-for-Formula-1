@@ -249,9 +249,9 @@ def test_a_saved_policy_loads_into_a_grown_observation_unchanged(
 
     from f1rl.agents.tactical import load_grown
 
-    small = PPO("MlpPolicy", _box_env(4), seed=0, device="cpu", n_steps=8)
+    small = PPO("MlpPolicy", _box_env(4), seed=0, device="cpu", n_steps=8, batch_size=8)
     small.save(tmp_path / "small.zip")
-    big = PPO("MlpPolicy", _box_env(6), seed=1, device="cpu", n_steps=8)
+    big = PPO("MlpPolicy", _box_env(6), seed=1, device="cpu", n_steps=8, batch_size=8)
     grown = load_grown(big, str(tmp_path / "small.zip"))
     assert grown  # the first layers grew
     obs = torch.tensor([[0.3, -0.2, 0.5, 0.1]])

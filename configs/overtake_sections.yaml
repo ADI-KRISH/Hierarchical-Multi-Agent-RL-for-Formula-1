@@ -91,6 +91,7 @@ env:
   section_tail_m: 100.0
   rescue_penalty: 0.0
   dirty_penalty: 1.0
+  hold_until_clear: true
   opponent_features: true
   guard:
     react_gap_m: 60.0

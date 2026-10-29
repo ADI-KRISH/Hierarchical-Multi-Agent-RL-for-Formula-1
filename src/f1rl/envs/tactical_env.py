@@ -28,8 +28,11 @@ from f1rl.envs.opponents import (
 )
 from f1rl.envs.race_env import ObsType, RaceEnv
 from f1rl.envs.racetrack import RaceTrack
-from f1rl.models.maneuver import Maneuver
+from f1rl.models.maneuver import Maneuver, shift_at
 from f1rl.models.raceline import OptimalLine
+
+#: The no-chop rule looks this far (m) ahead along the plan, and holds that long.
+CHOP_LOOK_M = 30.0
 
 
 class TacticalEnv(RaceEnv):
@@ -58,6 +61,7 @@ class TacticalEnv(RaceEnv):
         self._move = "line"
         self._maneuver: Maneuver | None = None
         self.refused = 0  # moves refused by the rules, this episode
+        self.chop_holds = 0  # times the no-chop rule held the car's line
         # Self-play: picks the moves of a ``rival_*`` opponent from that car's own
         # view of the race (same observation layout as ours). None = scripted.
         self.rival: Callable[[ObsType], int] | None = None
@@ -68,6 +72,7 @@ class TacticalEnv(RaceEnv):
     ) -> tuple[ObsType, dict[str, Any]]:
         _, info = super().reset(seed=seed, options=options)
         self._move, self._maneuver, self.refused = "line", None, 0
+        self.chop_holds = 0
         self._opp_move = "line"
         return self._tactical_obs(), info
 
@@ -108,6 +113,36 @@ class TacticalEnv(RaceEnv):
                 self.params.soft_follow,
             )
         return a
+
+    def _no_chop(self, d: PathDriver) -> None:
+        """Clean racing (`RaceEnvParams.hold_until_clear`): after getting alongside
+        or past, do not move back across into the other car's lane until clear of
+        its nose by `clean_chop_m` (plus a car length of margin): hold the current
+        offset from the line instead of the planned way back."""
+        p, opp, m = self.params, self._opp, self._maneuver
+        if not p.hold_until_clear or opp is None or m is None:
+            return
+        me = self._state
+        gap = wrap_gap(opp.state.s_m - me.s_m, self._lap_m)  # > 0: it is ahead
+        if gap > p.car_length_m:  # still behind it: nothing to cut across
+            return
+        if -gap - p.car_length_m >= p.clean_chop_m + p.car_length_m:
+            return  # clear
+        dn = opp.state.n_m - me.n_m
+        if abs(dn) < p.car_width_m + p.clean_side_m:
+            return  # already in its lane: moving away is the cure, not holding
+        ahead = me.s_m + CHOP_LOOK_M
+        line_n = d.base.line_state(ahead)[0]
+        planned = line_n + float(shift_at(m, np.array([ahead]))[0])
+        opp_n = opp.state.n_m + (
+            d.base.line_state(opp.state.s_m + CHOP_LOOK_M)[0]
+            - d.base.line_state(opp.state.s_m)[0]
+        )
+        if abs(opp_n - planned) >= abs(dn) - 0.05:
+            return  # the plan does not close on it
+        here = me.n_m - d.base.line_state(me.s_m)[0]
+        self._maneuver = Maneuver(me.s_m, ((0.0, here), (CHOP_LOOK_M, here)))
+        self.chop_holds += 1
 
     def _may_change(self, corners: list[Any]) -> bool:
         """Free to start a new move: not in a braking zone, none in progress."""
@@ -210,6 +245,7 @@ class TacticalEnv(RaceEnv):
         """One decision's worth (`option_steps` env steps) of the running move."""
         for _ in range(self.option_steps):
             d = self._driver()  # grip (tyres, wake) may have moved the plan
+            self._no_chop(d)
             assert self._maneuver is not None
             a: NDArray[np.float32] = d.act(
                 {

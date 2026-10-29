@@ -471,6 +471,10 @@ class RaceEnvParams:
     clean_chop_m: float = 3.0
     clean_follow_m: float = 0.5
     dirty_penalty: float = 0.0
+    # Tactical env: after a pass (or alongside), hold the current offset rather than
+    # move back across into the other car's lane before clear of its nose by
+    # `clean_chop_m` plus a car length (`TacticalEnv._no_chop`). False = earlier runs.
+    hold_until_clear: bool = False
     # Tactical env: also offer the `tactics.PULL_MOVES` (pull alongside now, even in
     # a braking zone or a corner). Changes the action and observation sizes, so
     # False = earlier runs and their models.

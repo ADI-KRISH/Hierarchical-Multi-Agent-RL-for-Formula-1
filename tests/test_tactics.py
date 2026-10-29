@@ -261,3 +261,26 @@ def test_a_saved_policy_loads_into_a_grown_observation_unchanged(
         a = small.policy.get_distribution(obs).distribution.probs
         b = big.policy.get_distribution(wide).distribution.probs
     assert torch.allclose(a, b, atol=1e-6)
+
+
+def test_a_trained_defender_sees_the_plain_layout_and_drives_the_car_ahead() -> None:
+    track = stadium_track()
+    line = optimal_line(track, EXAMPLE_CAR, MARGIN_M)
+    params = dataclasses.replace(
+        PARAMS, lane_moves=True, plan_features=True, opponents=("rival_ahead_slow",)
+    )
+    env = TacticalEnv(EXAMPLE_CAR, track, SimParams(seed=0), params, line, "random")
+    base = len(env._observation())
+    seen: list[int] = []
+
+    def defender(obs: np.ndarray) -> int:
+        seen.append(len(obs))
+        return MOVES.index("cover")
+
+    env.fixed_rival = env.rival = defender
+    env.rival_plain_obs = True
+    env.reset(seed=0, options={"opponent": "rival_ahead_slow", "gap_m": 30.0})
+    for _ in range(10):
+        env.step(env.moves.index("line"))
+    assert seen and set(seen) == {base + len(MOVES) + 2}
+    assert env._opp_move in ("cover", "line")  # its pick, or line if too late

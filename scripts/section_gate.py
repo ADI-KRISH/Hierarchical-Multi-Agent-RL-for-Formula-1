@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-from f1rl.agents.tactical import load_tactical_config, section_battle
+from f1rl.agents.tactical import use_defender, load_tactical_config, section_battle
 from f1rl.envs.racetrack import TUM_HELD_OUT, TUM_TRAIN, TUM_VALIDATION
 from f1rl.scenarios import make_env
 from f1rl.sections import KINDS, env_sections
@@ -30,6 +30,9 @@ def main() -> None:
     ap.add_argument("--tracks", default="validation")
     ap.add_argument("--opponents", default="slow,guard_slow")
     ap.add_argument("--gap", type=float, default=9.0)
+    ap.add_argument(
+        "--defender", default="", help="trained defender model for rival_ahead* cars"
+    )
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument(
         "--set", nargs="*", default=[], help="env overrides, e.g. pull_moves=true"
@@ -53,6 +56,8 @@ def main() -> None:
     rows = []
     for name in names:
         env = make_env(name, params, "random")
+        if args.defender:
+            use_defender([env], args.defender, ("line", "cover", "inside"))
         for sec in env_sections(env, config.section_params()):
             for opp in opponents:
                 r = section_battle(env, policy, sec, opp, args.gap)

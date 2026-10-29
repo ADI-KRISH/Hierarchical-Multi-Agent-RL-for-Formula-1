@@ -92,6 +92,9 @@ class TacticalEnv(RaceEnv):
         # plain layout (base observation, the running move out of `MOVES`, the next
         # corner), whatever moves and extra features this env has.
         self.rival_plain_obs = False
+        # A rival that stays for every episode (a trained defender), where a
+        # self-play rival is drawn per episode.
+        self.fixed_rival: Callable[[ObsType], int] | None = None
         self._opp_move = "line"
 
     def reset(

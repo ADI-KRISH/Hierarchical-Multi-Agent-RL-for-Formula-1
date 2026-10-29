@@ -22,7 +22,7 @@ import copy
 import csv
 import json
 import platform
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -118,6 +118,13 @@ class TacticalRun:
     # rule-based defender) or "line" (never defend; the policy then has to learn
     # when a defending move pays).
     bc_teacher: str = "tactician"
+    # A trained defender (`agents.defender_rl`) as every ``rival_ahead*`` car, in
+    # training and evaluation: its saved model and the moves it picks among. It
+    # sees the plain observation layout (`TacticalEnv.rival_plain_obs`).
+    defender_model: str = ""
+    defender_moves: list[str] = field(
+        default_factory=lambda: ["line", "cover", "inside"]
+    )
 
 
 @dataclass(frozen=True)
@@ -237,7 +244,7 @@ class MultiTrackTactical(gym.Env[Any, Any]):
         self._current = self._names[int(self.np_random.integers(len(self._names)))]
         here = self.starts.get(self._current, [])
         env = self.envs[self._current]
-        env.rival = None
+        env.rival = env.fixed_rival
         rival = bool(
             self.pool
             and self.pool.policies
@@ -512,6 +519,19 @@ class ScenarioCallback(BaseCallback):
         self._evaluate()
 
 
+def use_defender(
+    envs: Iterable[TacticalEnv], path: str, moves: Sequence[str]
+) -> None:
+    """Make a trained defender drive every ``rival_ahead*`` car of ``envs``."""
+    from f1rl.agents.defender_rl import load_defender  # imports this module
+
+    drive = load_defender(Path(path), tuple(moves))
+    for env in envs:
+        env.fixed_rival = drive
+        env.rival = drive
+        env.rival_plain_obs = True
+
+
 def load_grown(model: PPO, path: str) -> list[str]:
     """Load a saved policy into ``model``, whose observation may have grown: new
     inputs (appended at the end, e.g. `RaceEnvParams.plan_features`) get zero
@@ -588,12 +608,15 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
     )
 
     def make_envs(names: list[str], mode: str, seed: int) -> dict[str, TacticalEnv]:
-        return {
+        envs = {
             n: TacticalEnv(
                 car, kits[n].track, config.sim_params(seed), params, kits[n].line, mode
             )
             for n in names
         }
+        if run.defender_model:
+            use_defender(envs.values(), run.defender_model, run.defender_moves)
+        return envs
 
     starts: dict[str, list[RealStart]] = {}
     val_starts: dict[str, list[RealStart]] = {}

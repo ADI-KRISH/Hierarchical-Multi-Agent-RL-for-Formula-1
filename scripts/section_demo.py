@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 import yaml
 
-from f1rl.agents.tactical import load_tactical_config, section_won
+from f1rl.agents.tactical import use_defender, load_tactical_config, section_won
 from f1rl.envs.race_env import RaceEnv
 from f1rl.envs.racetrack import TUM_HELD_OUT, TUM_TRAIN, TUM_VALIDATION, RaceTrack
 from f1rl.scenarios import make_env, pick
@@ -138,6 +138,9 @@ def main() -> None:
     ap.add_argument("--tracks", default="held_out")
     ap.add_argument("--opponents", default="slow,guard_slow")
     ap.add_argument("--gap", type=float, default=9.0)
+    ap.add_argument(
+        "--defender", default="", help="trained defender model for rival_ahead* cars"
+    )
     ap.add_argument("--title", default="Corner-by-corner overtaking")
     ap.add_argument("--out", type=Path, default=Path("runs/section_demo.html"))
     ap.add_argument("--set", nargs="*", default=[], help="env overrides, k=v")
@@ -157,6 +160,8 @@ def main() -> None:
     moves: list[str] = []
     for name in names:
         env = make_env(name, params, "random")
+        if args.defender:
+            use_defender([env], args.defender, ("line", "cover", "inside"))
         moves = list(env.moves)
         tracks[name] = outline(env.track)
         for sec in env_sections(env, config.section_params()):

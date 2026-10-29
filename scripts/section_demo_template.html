@@ -121,7 +121,7 @@ const DATA = /*DATA*/null;
 const $ = (id) => document.getElementById(id);
 const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const KIND = { straight: "Straight", braking: "Braking zone", corner_in: "Corner, inside", corner_out: "Corner, outside" };
-const OPP = { slow: "slow car", guard_slow: "slow defender", backmarker: "backmarker" };
+const OPP = { slow: "slow car", guard_slow: "slow defender", rival_ahead_slow: "trained defender", backmarker: "backmarker" };
 const WHYCOL = { "clean pass": "--good", "still behind": "--muted", "too close": "--warn", "off track": "--bad", "contact": "--bad", "pass did not stick": "--warn" };
 let filter = "won", trackSel = "all", cur = null, t = 0, playing = false, last = 0;
 
@@ -185,7 +185,8 @@ function select(b, row) {
 
 function tick(now) {
   if (playing && cur) {
-    t += (now - last) / 1000 / DATA.dt * +$("speed").value;
+    // rAF time can lag performance.now() (set on select): never step backwards.
+    t = Math.max(0, t + Math.max(0, now - last) / 1000 / DATA.dt * +$("speed").value);
     if (t >= cur.frames.length - 1) { t = cur.frames.length - 1; playing = false; $("play").textContent = "Play"; }
     draw();
   }
@@ -194,7 +195,8 @@ function tick(now) {
 }
 
 function lerpFrame(fr, x) {
-  const i = Math.min(Math.floor(x), fr.length - 1), j = Math.min(i + 1, fr.length - 1), u = x - i;
+  x = Math.max(0, Math.min(x || 0, fr.length - 1));
+  const i = Math.floor(x), j = Math.min(i + 1, fr.length - 1), u = x - i;
   const a = fr[i], b = fr[j];
   const ang = (p, q) => p + Math.atan2(Math.sin(q - p), Math.cos(q - p)) * u;
   return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, ang(a[2], b[2]), a[3] + (b[3] - a[3]) * u,

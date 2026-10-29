@@ -31,6 +31,8 @@ from f1rl.agents.tactics import CORNER_SPEED_FRACTION
 from f1rl.config import SectionParams
 
 KINDS = ("straight", "braking", "corner_in", "corner_out")
+#: A side-by-side start needs the cars at least a car width plus this (m) apart.
+SIDE_GAP_M = 0.8
 
 
 @dataclass(frozen=True)
@@ -159,9 +161,11 @@ def section_options(
 
 
 def env_sections(env: Any, p: SectionParams | None = None) -> list[Section]:
-    """`track_sections` for a `TacticalEnv` (its driver's racing line)."""
+    """`track_sections` for a `TacticalEnv` (its driver's racing line), without the
+    side-by-side starts the road has no room for (our car would start overlapping
+    the other one: at least a car width plus `SIDE_GAP_M` apart, on the road)."""
     d = env._driver()
-    return track_sections(
+    secs = track_sections(
         env.track.name,
         np.asarray(d.line_speed(), dtype=np.float64),
         np.asarray(d.line_kappa(), dtype=np.float64),
@@ -169,3 +173,15 @@ def env_sections(env: Any, p: SectionParams | None = None) -> list[Section]:
         d.car.max_speed_ms,
         p,
     )
+    width = env.params.car_width_m + SIDE_GAP_M
+    out = []
+    for sec in secs:
+        if sec.shift_m:
+            n_line = d.base.line_state(sec.start_s)[0]
+            n_opp = d.base.line_state(sec.start_s + sec.gap_m)[0]
+            left, right = env._room_at(sec.start_s)
+            n_me = n_line + sec.shift_m
+            if not (-right + 0.3 <= n_me <= left - 0.3) or abs(n_me - n_opp) < width:
+                continue
+        out.append(sec)
+    return out

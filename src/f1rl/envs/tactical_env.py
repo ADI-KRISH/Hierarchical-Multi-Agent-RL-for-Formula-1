@@ -210,7 +210,13 @@ class TacticalEnv(RaceEnv):
             and wrap_gap(self._opp.state.s_m - s, self._lap_m) > 0
             and self._move != "cover"
         )
-        if want != self._move or self._maneuver is None or s > self._maneuver.end_s:
+        lane = want in LANE_MOVES  # re-aimed at the other car every decision
+        if (
+            lane
+            or want != self._move
+            or self._maneuver is None
+            or s > self._maneuver.end_s
+        ):
             if self._may_change(corners) or self._maneuver is None or attacking:
                 shift = self._state.n_m - d.base.line_state(s)[0]
                 threat = 0.0
@@ -223,6 +229,11 @@ class TacticalEnv(RaceEnv):
                     and wrap_gap(self._opp.state.s_m - s, self._lap_m) >= 0
                 ):
                     threat = 0.0  # nobody behind to cover
+                if lane and self._opp is not None:
+                    # Where the other car sits, from the line at its own position.
+                    threat = (
+                        self._opp.state.n_m - d.base.line_state(self._opp.state.s_m)[0]
+                    )
                 self._maneuver = make_move(want, d, s, shift, threat_shift=threat)
                 self._move = want
             else:

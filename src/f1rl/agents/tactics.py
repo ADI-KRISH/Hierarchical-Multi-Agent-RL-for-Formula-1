@@ -37,17 +37,21 @@ PULL_SHIFT_M = 2.8
 PULL_RAMP_M = 50.0
 PULL_HOLD_M = 200.0
 PULL_MIN_M = 1.5
-#: Direct control (`RaceEnvParams.lane_moves`): "drive this far (m, + = left) off
-#: the racing line", re-chosen every decision, each at normal or late braking. The
-#: agent picks its own line and braking point instead of a scripted move.
-LANE_SHIFTS_M = (-3.5, -2.0, 0.0, 2.0, 3.5)
+#: Direct control (`RaceEnvParams.lane_moves`): "drive beside the car ahead, this
+#: far (m, centre to centre) to its left or right", re-chosen every decision, each
+#: at normal or late braking. With "line" (tuck in behind / back to the racing
+#: line) the agent picks its own line and braking point, not a scripted move.
+LANE_GAPS_M = (3.0, 4.2)
 LANE_MOVES = tuple(
-    f"lane{x:+.1f}{late}" for x in LANE_SHIFTS_M for late in ("", "_late")
+    f"{side}{gap:.1f}{late}"
+    for side in ("left", "right")
+    for gap in LANE_GAPS_M
+    for late in ("", "_late")
 )
 #: Lane moves: how quickly the new offset is reached (m), and how far ahead (m) the
 #: road must have room for it.
-LANE_RAMP_M = 50.0
-LANE_LOOK_M = 120.0
+LANE_RAMP_M = 40.0
+LANE_LOOK_M = 80.0
 
 #: Largest sideways shift a move asks for (m): a car width plus a gap, and the
 #: ramp lengths (m) over which it is made and undone.
@@ -141,7 +145,7 @@ def make_move(
     ``shift_now`` m off the racing line. ``threat_shift`` is where the car behind
     sits relative to the line (for ``cover``)."""
     if name in LANE_MOVES:
-        return lane_move(name, driver, s_m, shift_now)
+        return lane_move(name, driver, s_m, shift_now, threat_shift)
     ahead = [c for c in corners_ahead(driver, s_m) if c.apex_m > 5.0]
     if name in PULL_MOVES:
         return pull_move(name, driver, s_m, shift_now, ahead)
@@ -248,16 +252,21 @@ def make_move(
     raise ValueError(f"unknown move {name!r}")
 
 
-def lane_move(name: str, driver: PathDriver, s_m: float, shift_now: float) -> Maneuver:
-    """A `LANE_MOVES` move: ease to the named offset from the racing line over
-    `LANE_RAMP_M` and hold it (as far as the road beside the line allows over the
-    next `LANE_LOOK_M`), braking late (`DIVE_BRAKE_FRACTION`) if ``_late``."""
+def lane_move(
+    name: str, driver: PathDriver, s_m: float, shift_now: float, other_shift: float
+) -> Maneuver:
+    """A `LANE_MOVES` move: ease over `LANE_RAMP_M` to the named distance left or
+    right of the other car (``other_shift``: its offset from the racing line) and
+    hold it, as far as the road allows over the next `LANE_LOOK_M`; braking late
+    (`DIVE_BRAKE_FRACTION`) if ``_late``."""
     late = name.endswith("_late")
-    want = float(name.removeprefix("lane").removesuffix("_late"))
+    side = 1.0 if name.startswith("left") else -1.0
+    gap = float(name.removeprefix("left").removeprefix("right").removesuffix("_late"))
+    want = other_shift + side * gap
     if want:
-        side = 1.0 if want > 0 else -1.0
-        free = room_beside(driver, s_m, LANE_RAMP_M + LANE_LOOK_M, side)
-        want = side * max(0.0, min(abs(want), free - EDGE_CLEARANCE_M))
+        to = 1.0 if want > 0 else -1.0
+        free = room_beside(driver, s_m, LANE_RAMP_M + LANE_LOOK_M, to)
+        want = to * max(0.0, min(abs(want), free - EDGE_CLEARANCE_M))
     return Maneuver(
         s_m,
         ((0.0, shift_now), (LANE_RAMP_M, want)),

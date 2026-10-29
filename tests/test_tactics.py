@@ -124,13 +124,14 @@ def test_lane_moves_pick_an_offset_the_road_has_room_for() -> None:
     env.reset(seed=0)
     d = env._driver()
     for name in LANE_MOVES:
-        m = make_move(name, d, 300.0, 0.5)
+        m = make_move(name, d, 300.0, 0.5, threat_shift=0.2)
         assert m.points[0] == (0.0, 0.5)  # from where the car is now
         want = m.points[-1][1]
         side = 1.0 if want >= 0 else -1.0
-        assert abs(want) <= room_beside(d, 300.0, 170.0, side)
+        assert abs(want) <= room_beside(d, 300.0, 120.0, side)
+        if want:  # beside the other car, on the named side
+            assert (want > 0.2) == name.startswith("left")
         assert (m.brake_fraction == DIVE_BRAKE_FRACTION) == name.endswith("_late")
-    assert make_move("lane+0.0", d, 300.0, 0.5).points[-1][1] == 0.0
 
 
 def test_lane_moves_are_offered_only_when_turned_on() -> None:
@@ -141,8 +142,8 @@ def test_lane_moves_are_offered_only_when_turned_on() -> None:
     env = TacticalEnv(EXAMPLE_CAR, track, SimParams(seed=0), params, line, "lap")
     assert env.action_space.n == len(MOVES) + len(LANE_MOVES)
     env.reset(seed=0)
-    for _ in range(40):  # left lane, late braking, round the stadium
-        *_, terminated, truncated, info = env.step(env.moves.index("lane+2.0_late"))
+    for _ in range(40):  # left of where a car would be, late braking
+        *_, terminated, truncated, info = env.step(env.moves.index("left3.0_late"))
         if terminated or truncated:
             break
     assert not info["off_track"]

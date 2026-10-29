@@ -74,6 +74,8 @@ class TacticalRun:
     # where the incident library is (relative to the project, or absolute).
     real_start_frac: float = 0.0
     incident_dir: str = "data/incidents"
+    # Which real starts to use: "attack" (a real pass to make) and/or "defend".
+    real_roles: list[str] = field(default_factory=lambda: ["attack", "defend"])
     # At most this many real starts per validation track in each evaluation (spread
     # evenly through the library), to keep evaluations quick.
     real_eval_per_track: int = 40
@@ -556,7 +558,11 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
     starts: dict[str, list[RealStart]] = {}
     val_starts: dict[str, list[RealStart]] = {}
     if run.real_start_frac > 0:
-        library = load_real_starts(Path(run.incident_dir))
+        library = [
+            st
+            for st in load_real_starts(Path(run.incident_dir))
+            if st.role in run.real_roles
+        ]
         starts = {
             k: v for k, v in by_track(library, ["train"]).items() if k in train_names
         }

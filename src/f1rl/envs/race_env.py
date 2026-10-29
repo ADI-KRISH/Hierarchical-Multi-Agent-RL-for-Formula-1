@@ -479,11 +479,9 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             if p.safety_filter:
                 self._opp.state = self._recoverable(self._opp.state, sign * gap)
             if self._section_m is not None and sign > 0:
-                # A section battle starts mid-corner too: no faster than the car
-                # ahead plus what we could still brake off within the gap.
-                room = max(0.0, gap - p.car_length_m - p.safety_margin_s_m)
-                slack = math.sqrt(room * self.car.max_braking_g * GRAVITY_M_S2)
-                v = min(self._state.speed_ms, self._opp.state.speed_ms + slack)
+                # A section battle can start mid-corner: no faster than the car
+                # ahead (it is a few metres away and may be braking hard).
+                v = min(self._state.speed_ms, self._opp.state.speed_ms)
                 self._state = replace(self._state, speed_ms=v)
         self._update_grip()
         info = self._info(off_track=False, lap_completed=False)

@@ -99,13 +99,14 @@ def test_section_won_needs_a_stuck_clean_pass() -> None:
         "passes": 1,
         "contact": False,
         "off_track": False,
-        "rescues": 0,
+        "rescues": 3,  # the cautious filter stepping in is allowed...
+        "dirty_steps": 0,
     }
     assert section_won(base)
     assert not section_won({**base, "passes": 0})
     assert not section_won({**base, "section_won": False})
     assert not section_won({**base, "contact": True})
-    assert not section_won({**base, "rescues": 1})  # the filter saved it
+    assert not section_won({**base, "dirty_steps": 1})  # ...too close is not
 
 
 def test_without_section_nothing_changes() -> None:
@@ -129,3 +130,22 @@ def test_multitrack_draws_sections_and_tracks_wins() -> None:
         if term or trunc:
             break
     assert multi.section_wins  # the result was recorded for that section
+
+
+def test_too_close_rules() -> None:
+    from f1rl.models.frenet import FrenetState
+
+    env = _env()
+    env.reset(seed=0, options={"opponent": "slow", "gap_m": 20.0})
+    me = FrenetState(100.0, 0.0, 0.0, 50.0)
+
+    def at(ds: float, dn: float) -> bool:
+        return env._too_close(FrenetState(100.0 + ds, dn, 0.0, 50.0), me)
+
+    assert not at(0.0, 3.0)  # side by side with 1 m of air
+    assert at(0.0, 2.3)  # side by side, 0.3 m of air
+    assert not at(6.5, 0.0)  # following 1 m off its gearbox
+    assert at(5.8, 0.0)  # 0.3 m off it
+    assert at(-7.0, 0.0)  # cut in 1.5 m in front of its nose: a chop
+    assert not at(-9.0, 0.0)  # 3.5 m clear: fine
+    assert not at(-7.0, 3.0)  # ahead but not in its lane

@@ -457,10 +457,20 @@ class RaceEnvParams:
     slow_power_frac: float = 1.0
     # Clean racing: a "rescue" is a no-crash filter step on either car while the
     # cars are within a car length plus `rescue_margin_m` of each other (wheel to
-    # wheel). Each costs `rescue_penalty` on top of `intervention_penalty`, and a
-    # section battle with any rescue is not won (`agents.tactical.section_won`).
+    # wheel). Each costs `rescue_penalty` on top of `intervention_penalty`. (The
+    # filter is cautious: it also steps in with metres of air, so rescues are
+    # reported but do not decide a win; the clean_* rules below do.)
     rescue_margin_m: float = 1.0
     rescue_penalty: float = 0.0
+    # Clean racing by geometry, checked every physics step: side by side, at least
+    # `clean_side_m` of air between the cars; ahead in the other car's lane, at
+    # least `clean_chop_m` in front of its nose (no chop after a pass); behind in its
+    # lane, at least `clean_follow_m` off its gearbox. Each step closer costs
+    # `dirty_penalty`, and a section battle with any is not won. Design choices.
+    clean_side_m: float = 0.5
+    clean_chop_m: float = 3.0
+    clean_follow_m: float = 0.5
+    dirty_penalty: float = 0.0
     # Tactical env: also offer the `tactics.PULL_MOVES` (pull alongside now, even in
     # a braking zone or a corner). Changes the action and observation sizes, so
     # False = earlier runs and their models.

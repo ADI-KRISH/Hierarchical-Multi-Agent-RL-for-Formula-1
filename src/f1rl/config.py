@@ -267,9 +267,11 @@ class SectionParams:
     past_apex_m: float = 30.0
     # Corner battles start this share of the way from the braking point to the apex
     # (the turn-in) and end this far past the apex (the exit), or at the top of the
-    # ramp out of the corner if sooner. Straights start at the previous exit.
+    # ramp out of the corner if sooner.
     turn_in_frac: float = 0.5
     corner_exit_m: float = 150.0
+    # Straight battles start this far past the previous corner's apex.
+    straight_from_apex_m: float = 10.0
     # Sections shorter than this are left out (no room for a pass).
     min_length_m: float = 80.0
 

@@ -5,8 +5,8 @@ few metres behind a slower car at the start of one section and is won only if ou
 is ahead by the section's end (and the pass then sticks, `RaceEnvParams.pass_hold_m`).
 So each kind of pass is learned where it happens:
 
-- **straight**: from the exit of one corner to the next braking point -- the pass
-  in the tow (slipstream + DRS), finished before anyone brakes.
+- **straight**: from the apex of one corner to the next braking point -- the better
+  exit, then the pass in the tow (slipstream + DRS), finished before anyone brakes.
 - **braking**: from the approach to a braking point to just after the apex -- the
   late-braking dive up the inside (or the switch from a feint).
 - **corner**: from the turn-in to the corner exit -- round the outside, or the
@@ -119,8 +119,9 @@ def track_sections(
                     )
                 )
 
-        # Straight: corner exit to braking point (the pass must be done by then).
-        add("straight", max(prev_exit, prev_apex + 1.0), brake)
+        # Straight: from the previous apex (the exit is where a quicker car gains)
+        # to the braking point (the pass must be done by then).
+        add("straight", prev_apex + p.straight_from_apex_m, brake)
         # Braking zone: the approach to the braking point to just past the apex.
         approach = max(brake - p.approach_m, prev_exit, prev_apex + 1.0)
         add("braking", approach, apex + p.past_apex_m)
@@ -142,6 +143,7 @@ def section_options(
         "section_m": sec.length_m,
         "push": push,
         "wear": 0.0,
+        "start_speed_frac": 1.0,  # at racing speed, like the car it is chasing
     }
 
 

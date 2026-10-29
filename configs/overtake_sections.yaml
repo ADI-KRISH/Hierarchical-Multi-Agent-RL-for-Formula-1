@@ -104,4 +104,5 @@ sections:
   past_apex_m: 30.0
   turn_in_frac: 0.5
   corner_exit_m: 150.0
+  straight_from_apex_m: 10.0
   min_length_m: 80.0

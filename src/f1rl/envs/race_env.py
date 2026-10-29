@@ -423,7 +423,10 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                 self._line_ref = LineFollower(self.car, self.track, self.reference)
             s0 = float(opts["start_s"]) % self._lap_m
             n0, psi0, v0 = self._line_ref.line_state(s0)
-            self._state = FrenetState(s0, n0, psi0, max(0.95 * v0, p.min_speed_ms + 2))
+            # 95% of the line's speed, unless the options say (a section battle
+            # starts at full racing speed).
+            frac = float(opts.get("start_speed_frac", 0.95))
+            self._state = FrenetState(s0, n0, psi0, max(frac * v0, p.min_speed_ms + 2))
         else:
             s0 = float(self.np_random.uniform(0.0, self._lap_m))
             i0 = int(s0 / self._ds) % self._n

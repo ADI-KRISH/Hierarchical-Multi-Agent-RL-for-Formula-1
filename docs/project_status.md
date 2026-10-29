@@ -318,3 +318,24 @@ Held-out (5 unseen tracks, 525 battles, 0 contacts for both):
 Against slow + guard_slow the model went from 30/350 (one corner, no drag) to
 42/350. The scripted driver is still a little ahead; PPO has stalled at about its
 level. Demo: https://claude.ai/artifact/1nc7cSww9HWwToDrQsB5DA
+
+### Slower cars slower only in corners (2026-10-29, user report)
+
+The user saw the car ahead braking long before corners and slower on straights,
+which made passes easy. Measured on Hockenheim: a 0.80 car braked ~25-30 m before
+us into fast corners (it planned braking for 80% of the brake limit) and planned
+its acceleration for 80% too, with 3% less power. New options (defaults unchanged):
+`opponent_braking_fraction`, `opponent_accel_fraction` (both 0.95 = our plan) and
+`slow_power_frac` 1.0 in `configs/overtake_vs_defender_v2.yaml`: a slower car now
+loses time only through the corners; on a straight it is caught only in the tow.
+Also fixed: the demo's replay crashed when the browser clock lagged (negative time).
+
+Validation (270 battles): scripted 17, model at start 20; training flat (best 22 at
+100k), stopped at 300k. Held-out (525 battles, 0 contacts both):
+
+| car ahead | model | scripted |
+|---|---|---|
+| slow | 6/175 | 8/175 |
+| guard_slow | 26/175 | 30/175 |
+| trained defender | 5/175 | 13/175 |
+| total | 37/525 | 51/525 |

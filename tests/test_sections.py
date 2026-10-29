@@ -45,14 +45,17 @@ def test_sections_cover_each_corner_in_order() -> None:
     for sec in secs:
         assert 0.0 <= sec.start_s < 2000.0
         assert sec.length_m >= SectionParams().min_length_m
-    first, second = secs[:3], secs[3:]
+    first, second = secs[:4], secs[4:]
     assert all(s.side == 1.0 for s in first) and all(s.side == -1.0 for s in second)
     assert abs(first[0].apex_s - 500.0) < 5.0
     # The straight ends at the braking point; the braking zone ends past the apex.
-    straight, braking, corner = first
+    straight, braking, corner_in, corner_out = first
     assert abs((straight.start_s + straight.length_m) % 2000 - straight.brake_s) < 1e-6
     assert braking.start_s + braking.length_m > braking.apex_s
-    assert corner.start_s > braking.start_s
+    assert corner_in.start_s > braking.start_s
+    # Corner battles start half alongside, on the inside (left here) or outside.
+    assert corner_in.shift_m > 0 > corner_out.shift_m
+    assert straight.shift_m == 0.0 and 0.0 < corner_in.gap_m < 5.5
 
 
 def test_short_sections_are_dropped() -> None:
@@ -61,7 +64,7 @@ def test_short_sections_are_dropped() -> None:
         "synthetic", v, kappa, 5.0, 100.0, SectionParams(min_length_m=900.0)
     )
     assert all(s.length_m >= 900.0 for s in secs)
-    assert len(secs) < 6
+    assert len(secs) < 8
 
 
 def test_no_corners_no_sections() -> None:

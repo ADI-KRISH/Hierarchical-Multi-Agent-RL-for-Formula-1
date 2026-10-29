@@ -272,6 +272,10 @@ class SectionParams:
     corner_exit_m: float = 300.0
     # Straight battles start this far past the previous corner's apex.
     straight_from_apex_m: float = 10.0
+    # Corner battles start half alongside: this far behind (m, centre to centre; a
+    # car is 5.5 m long) and this far to the inside or outside of the racing line.
+    corner_gap_m: float = 3.0
+    corner_shift_m: float = 3.0
     # Sections shorter than this are left out (no room for a pass).
     min_length_m: float = 80.0
 

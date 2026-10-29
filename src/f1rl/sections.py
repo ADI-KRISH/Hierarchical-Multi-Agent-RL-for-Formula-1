@@ -9,8 +9,11 @@ So each kind of pass is learned where it happens:
   exit, then the pass in the tow (slipstream + DRS), finished before anyone brakes.
 - **braking**: from the approach to a braking point to just after the apex -- the
   late-braking dive up the inside (or the switch from a feint).
-- **corner**: from the turn-in to the corner exit -- round the outside, or the
-  better exit and the drag race out of the corner.
+- **corner_in / corner_out**: from the turn-in to the corner exit, starting already
+  half alongside (`SectionParams.corner_gap_m` behind, `corner_shift_m` to the
+  inside or the outside): finish the pass through the corner. From a few metres
+  straight behind, a single corner is too short to pass in (checked: almost never,
+  even by brute force), so the corner battle is the side-by-side part.
 
 Sections come from the racing line itself (its speed profile, as
 `agents.tactics.corners_ahead`), so they exist on any track with no hand labels.
@@ -27,7 +30,7 @@ from numpy.typing import NDArray
 from f1rl.agents.tactics import CORNER_SPEED_FRACTION
 from f1rl.config import SectionParams
 
-KINDS = ("straight", "braking", "corner")
+KINDS = ("straight", "braking", "corner_in", "corner_out")
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,10 @@ class Section:
     brake_s: float  # the corner's braking point (m along the track)
     apex_s: float  # the corner's apex (m along the track)
     side: float  # +1 left-hander, -1 right-hander (the inside)
+    # Where our car starts: this far (m) left (+) of the racing line, and the
+    # battle's own gap to the car ahead (m, centre to centre; 0 = the caller's).
+    shift_m: float = 0.0
+    gap_m: float = 0.0
 
     @property
     def name(self) -> str:
@@ -100,7 +107,9 @@ def track_sections(
         prev_apex = corners[i - 1][1] * ds_m
         if prev_apex >= apex:
             prev_apex -= lap
-        def add(kind: str, start: float, end: float) -> None:
+        def add(
+            kind: str, start: float, end: float, shift: float = 0.0, gap: float = 0.0
+        ) -> None:
             if end - start >= p.min_length_m:
                 out.append(
                     Section(
@@ -112,6 +121,8 @@ def track_sections(
                         brake % lap,
                         apex % lap,
                         side,
+                        shift,
+                        gap,
                     )
                 )
 
@@ -123,7 +134,9 @@ def track_sections(
         add("braking", approach, apex + p.past_apex_m)
         # Corner: turn-in (a little before the braking point ends) to the exit.
         turn_in = max(brake + p.turn_in_frac * (apex - brake), approach)
-        add("corner", turn_in, min(apex + p.corner_exit_m, max(top, apex + 60.0)))
+        end = min(apex + p.corner_exit_m, max(top, apex + 60.0))
+        add("corner_in", turn_in, end, side * p.corner_shift_m, p.corner_gap_m)
+        add("corner_out", turn_in, end, -side * p.corner_shift_m, p.corner_gap_m)
     return out
 
 
@@ -131,11 +144,13 @@ def section_options(
     sec: Section, opponent: str, gap_m: float, push: float = 1.0
 ) -> dict[str, Any]:
     """`RaceEnv.reset` options for a battle in ``sec``: our car at its start,
-    ``opponent`` ``gap_m`` ahead, the pass to be finished within its length."""
+    ``opponent`` ``gap_m`` ahead (the section's own gap, if it has one), the pass to
+    be finished within its length."""
     return {
         "start_s": sec.start_s,
+        "start_shift_m": sec.shift_m,
         "opponent": opponent,
-        "gap_m": gap_m,
+        "gap_m": sec.gap_m or gap_m,
         "section_m": sec.length_m,
         "push": push,
         "wear": 0.0,

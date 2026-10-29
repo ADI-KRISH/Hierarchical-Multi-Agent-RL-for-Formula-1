@@ -426,6 +426,12 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             # 95% of the line's speed, unless the options say (a section battle
             # starts at full racing speed).
             frac = float(opts.get("start_speed_frac", 0.95))
+            # Off the line by ``start_shift_m`` (+ = left), kept on the road.
+            shift = float(opts.get("start_shift_m", 0.0))
+            if shift:
+                lo = -self._at(self._room_right, s0) + 0.3
+                hi = self._at(self._room_left, s0) - 0.3
+                n0 = float(np.clip(n0 + shift, lo, hi))
             self._state = FrenetState(s0, n0, psi0, max(frac * v0, p.min_speed_ms + 2))
         else:
             s0 = float(self.np_random.uniform(0.0, self._lap_m))

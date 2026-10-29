@@ -91,6 +91,10 @@ class TacticalRun:
     # Defender training (`agents.defender_rl`): battles per validation track (from
     # this many points round the lap) at every evaluation.
     eval_starts: int = 6
+    # ...and who it imitates first (``bc_decisions`` > 0): "tactician" (the
+    # rule-based defender) or "line" (never defend; the policy then has to learn
+    # when a defending move pays).
+    bc_teacher: str = "tactician"
 
 
 @dataclass(frozen=True)

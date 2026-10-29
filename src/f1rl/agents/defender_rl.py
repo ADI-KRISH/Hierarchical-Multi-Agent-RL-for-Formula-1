@@ -112,10 +112,18 @@ def evaluate(
 
 
 def clone_defender(
-    model: PPO, envs: dict[str, TacticalEnv], decisions: int, epochs: int, seed: int
+    model: PPO,
+    envs: dict[str, TacticalEnv],
+    decisions: int,
+    epochs: int,
+    seed: int,
+    teacher: str = "tactician",
 ) -> float:
-    """Start the policy as the rule-based defender (behaviour cloning). Returns the
-    share of decisions it agrees with afterwards."""
+    """Start the policy as ``teacher`` (behaviour cloning): "tactician", the
+    rule-based defender, or "line", never defending. Returns the share of decisions
+    it agrees with afterwards."""
+    if teacher not in ("tactician", "line"):
+        raise ValueError(f"unknown bc_teacher {teacher!r}")
     rng = np.random.default_rng(seed)
     names = list(envs)
     xs: list[Any] = []
@@ -125,7 +133,7 @@ def clone_defender(
         obs, _ = env.reset(seed=int(rng.integers(2**31 - 1)))
         done = False
         while not done and len(xs) < decisions:
-            a = defend_action(env)
+            a = env.moves.index("line") if teacher == "line" else defend_action(env)
             xs.append(obs)
             ys.append(a)
             obs, _, terminated, truncated, _ = env.step(a)
@@ -318,9 +326,10 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
             run.bc_decisions,
             run.bc_epochs,
             run.seed,
+            run.bc_teacher,
         )
         print(
-            f"Behaviour cloning: agrees with the rule-based defender {agree:.1%}",
+            f"Behaviour cloning ({run.bc_teacher}): agrees {agree:.1%}",
             flush=True,
         )
     starts = max(1, run.eval_starts)

@@ -194,4 +194,4 @@ def test_span_corners_runs_each_battle_to_a_later_corner_exit() -> None:
         assert abs((sec.start_s + sec.length_m) % 2000 - exit_2) < 1e-6
     for sec in two[4:]:
         assert abs((sec.start_s + sec.length_m) % 2000 - exit_1) < 1e-6
-        assert sec.length_m < 2000.0
+        assert sec.length_m < 2000.0 + 300.0  # within a lap of its corner

@@ -18,7 +18,13 @@ import numpy as np
 from numpy.typing import NDArray
 
 from f1rl.agents.path_driver import PathDriver
-from f1rl.agents.tactics import MOVES, PULL_MOVES, corners_ahead, make_move
+from f1rl.agents.tactics import (
+    LANE_MOVES,
+    MOVES,
+    PULL_MOVES,
+    corners_ahead,
+    make_move,
+)
 from f1rl.config import GRAVITY_M_S2, CarParams, RaceEnvParams, SimParams
 from f1rl.envs.opponents import (
     FOLLOW_GAP_M,
@@ -52,7 +58,11 @@ class TacticalEnv(RaceEnv):
         super().__init__(car, track, sim, params, reference, mode)
         self.option_steps = option_steps
         # The moves this env offers: `MOVES`, plus `PULL_MOVES` if turned on.
-        self.moves: tuple[str, ...] = MOVES + (PULL_MOVES if params.pull_moves else ())
+        self.moves: tuple[str, ...] = (
+            MOVES
+            + (PULL_MOVES if params.pull_moves else ())
+            + (LANE_MOVES if params.lane_moves else ())
+        )
         self.action_space = gym.spaces.Discrete(len(self.moves))
         n = self.observation_space.shape[0]  # type: ignore[index]
         self.observation_space = gym.spaces.Box(
@@ -195,7 +205,7 @@ class TacticalEnv(RaceEnv):
         # An attacker may pull alongside in a braking zone (moving under braking is
         # a defender's offence); a running cover still may not be switched.
         attacking = (
-            want in PULL_MOVES
+            (want in PULL_MOVES or want in LANE_MOVES)
             and self._opp is not None
             and wrap_gap(self._opp.state.s_m - s, self._lap_m) > 0
             and self._move != "cover"

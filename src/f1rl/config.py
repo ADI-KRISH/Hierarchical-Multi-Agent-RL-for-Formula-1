@@ -485,6 +485,11 @@ class RaceEnvParams:
     # a braking zone or a corner). Changes the action and observation sizes, so
     # False = earlier runs and their models.
     pull_moves: bool = False
+    # Tactical env: also offer `tactics.LANE_MOVES`, direct control: every decision
+    # the attacker picks its offset from the racing line (5 lanes) and normal or late
+    # braking, under the same no-crash filter and clean-racing rules. Changes the
+    # action and observation sizes, so False = earlier runs and their models.
+    lane_moves: bool = False
     safety_horizon_s: float = 2.5  # was 1.5; 1.5 s missed side-by-side corner entries
     safety_max_horizon_s: float = 3.0
     safety_dt_s: float = 0.05

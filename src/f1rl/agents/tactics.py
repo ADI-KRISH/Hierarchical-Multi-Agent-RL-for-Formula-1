@@ -37,6 +37,17 @@ PULL_SHIFT_M = 2.8
 PULL_RAMP_M = 50.0
 PULL_HOLD_M = 200.0
 PULL_MIN_M = 1.5
+#: Direct control (`RaceEnvParams.lane_moves`): "drive this far (m, + = left) off
+#: the racing line", re-chosen every decision, each at normal or late braking. The
+#: agent picks its own line and braking point instead of a scripted move.
+LANE_SHIFTS_M = (-3.5, -2.0, 0.0, 2.0, 3.5)
+LANE_MOVES = tuple(
+    f"lane{x:+.1f}{late}" for x in LANE_SHIFTS_M for late in ("", "_late")
+)
+#: Lane moves: how quickly the new offset is reached (m), and how far ahead (m) the
+#: road must have room for it.
+LANE_RAMP_M = 50.0
+LANE_LOOK_M = 120.0
 
 #: Largest sideways shift a move asks for (m): a car width plus a gap, and the
 #: ramp lengths (m) over which it is made and undone.
@@ -129,6 +140,8 @@ def make_move(
     """The `Maneuver` for move ``name`` started now at ``s_m``, with the car
     ``shift_now`` m off the racing line. ``threat_shift`` is where the car behind
     sits relative to the line (for ``cover``)."""
+    if name in LANE_MOVES:
+        return lane_move(name, driver, s_m, shift_now)
     ahead = [c for c in corners_ahead(driver, s_m) if c.apex_m > 5.0]
     if name in PULL_MOVES:
         return pull_move(name, driver, s_m, shift_now, ahead)
@@ -233,6 +246,25 @@ def make_move(
             ],
         )
     raise ValueError(f"unknown move {name!r}")
+
+
+def lane_move(
+    name: str, driver: PathDriver, s_m: float, shift_now: float
+) -> Maneuver:
+    """A `LANE_MOVES` move: ease to the named offset from the racing line over
+    `LANE_RAMP_M` and hold it (as far as the road beside the line allows over the
+    next `LANE_LOOK_M`), braking late (`DIVE_BRAKE_FRACTION`) if ``_late``."""
+    late = name.endswith("_late")
+    want = float(name.removeprefix("lane").removesuffix("_late"))
+    if want:
+        side = 1.0 if want > 0 else -1.0
+        free = room_beside(driver, s_m, LANE_RAMP_M + LANE_LOOK_M, side)
+        want = side * max(0.0, min(abs(want), free - EDGE_CLEARANCE_M))
+    return Maneuver(
+        s_m,
+        ((0.0, shift_now), (LANE_RAMP_M, want)),
+        DIVE_BRAKE_FRACTION if late else None,
+    )
 
 
 def pull_move(

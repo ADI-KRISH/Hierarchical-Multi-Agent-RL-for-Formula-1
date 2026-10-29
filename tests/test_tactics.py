@@ -1,9 +1,18 @@
+import dataclasses
+
 import numpy as np
 import pytest
 from gymnasium.utils.env_checker import check_env
 
 from f1rl.agents.path_driver import PathDriver
-from f1rl.agents.tactics import MOVES, corners_ahead, make_move
+from f1rl.agents.tactics import (
+    DIVE_BRAKE_FRACTION,
+    LANE_MOVES,
+    MOVES,
+    corners_ahead,
+    make_move,
+    room_beside,
+)
 from f1rl.config import EXAMPLE_CAR, OPPONENT_KINDS, RaceEnvParams, SimParams
 from f1rl.envs.tactical_env import TacticalEnv
 from f1rl.models.maneuver import Maneuver, hold, shift_at
@@ -108,3 +117,32 @@ def test_the_overtake_assist_is_for_the_car_behind_on_a_straight() -> None:
     boost = env._tow(behind, ahead)
     assert boost == (PARAMS.tow_boost_ms if straight else 0.0)
     assert env._tow(ahead, behind) == 0.0  # the leader gets none
+
+
+def test_lane_moves_pick_an_offset_the_road_has_room_for() -> None:
+    env = _env()
+    env.reset(seed=0)
+    d = env._driver()
+    for name in LANE_MOVES:
+        m = make_move(name, d, 300.0, 0.5)
+        assert m.points[0] == (0.0, 0.5)  # from where the car is now
+        want = m.points[-1][1]
+        side = 1.0 if want >= 0 else -1.0
+        assert abs(want) <= room_beside(d, 300.0, 170.0, side)
+        assert (m.brake_fraction == DIVE_BRAKE_FRACTION) == name.endswith("_late")
+    assert make_move("lane+0.0", d, 300.0, 0.5).points[-1][1] == 0.0
+
+
+def test_lane_moves_are_offered_only_when_turned_on() -> None:
+    assert _env().action_space.n == len(MOVES)
+    track = stadium_track()
+    line = optimal_line(track, EXAMPLE_CAR, MARGIN_M)
+    params = dataclasses.replace(PARAMS, lane_moves=True)
+    env = TacticalEnv(EXAMPLE_CAR, track, SimParams(seed=0), params, line, "lap")
+    assert env.action_space.n == len(MOVES) + len(LANE_MOVES)
+    env.reset(seed=0)
+    for _ in range(40):  # left lane, late braking, round the stadium
+        *_, terminated, truncated, info = env.step(env.moves.index("lane+2.0_late"))
+        if terminated or truncated:
+            break
+    assert not info["off_track"]

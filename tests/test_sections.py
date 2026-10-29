@@ -167,3 +167,31 @@ def test_too_close_rules() -> None:
     assert not at(-7.0, 0.5)  # holding our line: it tucked in behind us
     assert not at(-9.0, 0.5, 2.0)  # 3.5 m clear: fine
     assert not at(-7.0, 3.0)  # ahead but not in its lane
+
+
+def test_span_corners_runs_each_battle_to_a_later_corner_exit() -> None:
+    v, kappa = _profile()
+    one = track_sections(
+        "synthetic", v, kappa, 5.0, 100.0, SectionParams(finish_at_exit=True)
+    )
+    two = track_sections(
+        "synthetic",
+        v,
+        kappa,
+        5.0,
+        100.0,
+        SectionParams(finish_at_exit=True, span_corners=2),
+    )
+    assert [s.kind for s in two] == [s.kind for s in one]
+    for a, b in zip(one, two, strict=True):
+        assert a.start_s == b.start_s
+        assert b.length_m > a.length_m
+    # A battle from corner 1 now ends at corner 2's exit, and one from corner 2
+    # at corner 1's exit on the next lap.
+    exit_2 = (one[4].start_s + one[4].length_m) % 2000
+    exit_1 = (one[2].start_s + one[2].length_m) % 2000
+    for sec in two[:4]:
+        assert abs((sec.start_s + sec.length_m) % 2000 - exit_2) < 1e-6
+    for sec in two[4:]:
+        assert abs((sec.start_s + sec.length_m) % 2000 - exit_1) < 1e-6
+        assert sec.length_m < 2000.0

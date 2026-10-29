@@ -284,6 +284,11 @@ class SectionParams:
     # finished through the corner. With False, even a car 30% down on grip was
     # passed in only 7 of 90 validation sections (checked 2026-10-29).
     finish_at_exit: bool = False
+    # Corners a battle spans: 1 = one section (to that corner's exit); 2 or 3 = the
+    # pass may be set up in one corner and finished in the next, by the exit of the
+    # `span_corners`-th corner from the start. A single section is often too short
+    # to pass a car only slightly slower (held-out 2026-10-29: 30/350 clean).
+    span_corners: int = 1
 
 
 @dataclass(frozen=True)

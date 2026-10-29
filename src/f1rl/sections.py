@@ -101,9 +101,18 @@ def track_sections(
     p = p or SectionParams()
     lap = len(speed) * ds_m
     corners = _corners(speed, max_speed)
+
+    def exit_of(j: int) -> float:
+        # Corner j's exit (j may run past the last corner, into the next lap).
+        _, a_j, x_j = corners[j % len(corners)]
+        apex_j, top_j = a_j * ds_m, x_j * ds_m
+        lap_j = lap * (j // len(corners))
+        return lap_j + min(apex_j + p.corner_exit_m, max(top_j, apex_j + 60.0))
+
+    span = max(1, min(p.span_corners, len(corners)))
     out: list[Section] = []
-    for i, (b, a, x) in enumerate(corners):
-        brake, apex, top = b * ds_m, a * ds_m, x * ds_m
+    for i, (b, a, _x) in enumerate(corners):
+        brake, apex = b * ds_m, a * ds_m
         side = float(np.sign(kappa[a])) or 1.0
         # The previous corner's apex (unwrapped to before this one).
         prev_apex = corners[i - 1][1] * ds_m
@@ -113,22 +122,26 @@ def track_sections(
         approach = max(brake - p.approach_m, prev_apex + p.straight_from_apex_m)
         turn_in = max(brake + p.turn_in_frac * (apex - brake), approach)
         # Corner exit: the top of the ramp out of it (60-`corner_exit_m` m past it).
-        end = min(apex + p.corner_exit_m, max(top, apex + 60.0))
+        end = exit_of(i)
+        # A multi-corner battle runs on to the exit of the `span_corners`-th corner.
+        last = exit_of(i + span - 1)
+        reach = last if span > 1 else -np.inf  # straight/braking: only if spanning
         # Straight: from the previous apex (the exit is where a quicker car gains)
         # to the braking point (the pass must be done by then, or by the exit).
         straight = prev_apex + p.straight_from_apex_m
         if brake - straight >= p.min_length_m:
             done = end if p.finish_at_exit else brake
-            spans.append(("straight", straight, done, 0.0))
+            spans.append(("straight", straight, max(done, reach), 0.0))
         # Braking zone: the approach to the braking point to just past the apex.
         if apex + p.past_apex_m - approach >= p.min_length_m:
             done = end if p.finish_at_exit else apex + p.past_apex_m
-            spans.append(("braking", approach, max(done, apex + p.past_apex_m), 0.0))
+            done = max(done, apex + p.past_apex_m, reach)
+            spans.append(("braking", approach, done, 0.0))
         # Corner: turn-in (a little before the braking point ends) to the exit,
         # starting half alongside on the inside or the outside.
         if end - turn_in >= p.min_length_m:
-            spans.append(("corner_in", turn_in, end, side * p.corner_shift_m))
-            spans.append(("corner_out", turn_in, end, -side * p.corner_shift_m))
+            spans.append(("corner_in", turn_in, last, side * p.corner_shift_m))
+            spans.append(("corner_out", turn_in, last, -side * p.corner_shift_m))
         out += [
             Section(
                 track,

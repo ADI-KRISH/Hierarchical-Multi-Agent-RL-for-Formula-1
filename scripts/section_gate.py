@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-from f1rl.agents.tactical import use_defender, load_tactical_config, section_battle
+from f1rl.agents.tactical import load_tactical_config, section_battle, use_defender
 from f1rl.envs.racetrack import TUM_HELD_OUT, TUM_TRAIN, TUM_VALIDATION
 from f1rl.scenarios import make_env
 from f1rl.sections import KINDS, env_sections

@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 import yaml
 
-from f1rl.agents.tactical import use_defender, load_tactical_config, section_won
+from f1rl.agents.tactical import load_tactical_config, section_won, use_defender
 from f1rl.envs.race_env import RaceEnv
 from f1rl.envs.racetrack import TUM_HELD_OUT, TUM_TRAIN, TUM_VALIDATION, RaceTrack
 from f1rl.scenarios import make_env, pick

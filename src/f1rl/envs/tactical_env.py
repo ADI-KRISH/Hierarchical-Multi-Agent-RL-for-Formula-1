@@ -298,7 +298,8 @@ class TacticalEnv(RaceEnv):
             return
         if want in ("cover", "inside"):
             behind = wrap_gap(opp.state.s_m - self._state.s_m, self._lap_m)
-            if 0.0 < behind < self.params.car_length_m + self.params.guard.min_move_gap_m:
+            late = self.params.car_length_m + self.params.guard.min_move_gap_m
+            if 0.0 < behind < late:
                 want = "line"  # too late to move across our nose
         shift = opp.state.n_m - opp.driver.base.line_state(s)[0]
         threat = 0.0

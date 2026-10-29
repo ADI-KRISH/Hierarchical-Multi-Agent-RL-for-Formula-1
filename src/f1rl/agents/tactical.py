@@ -519,9 +519,7 @@ class ScenarioCallback(BaseCallback):
         self._evaluate()
 
 
-def use_defender(
-    envs: Iterable[TacticalEnv], path: str, moves: Sequence[str]
-) -> None:
+def use_defender(envs: Iterable[TacticalEnv], path: str, moves: Sequence[str]) -> None:
     """Make a trained defender drive every ``rival_ahead*`` car of ``envs``."""
     from f1rl.agents.defender_rl import load_defender  # imports this module
 

@@ -289,8 +289,10 @@ class MultiTrackTactical(gym.Env[Any, Any]):
 
 
 def section_won(info: dict[str, Any]) -> bool:
-    """A section battle is won: ahead at the section's end, the pass stuck, clean."""
-    clean = not info["contact"] and not info["off_track"]
+    """A section battle is won: ahead at the section's end, the pass stuck, and
+    clean: no contact, never off the track, and the no-crash filter never had to
+    step in while the cars were wheel to wheel (``rescues``)."""
+    clean = not info["contact"] and not info["off_track"] and not info["rescues"]
     return bool(info["section_won"] and info["passes"] >= 1 and clean)
 
 
@@ -310,6 +312,7 @@ def section_battle(
         "contact": bool(info["contact"]),
         "off": bool(info["off_track"]),
         "interventions": int(info["interventions"]),
+        "rescues": int(info["rescues"]),
         "elapsed_s": float(info["elapsed_s"]),
     }
 

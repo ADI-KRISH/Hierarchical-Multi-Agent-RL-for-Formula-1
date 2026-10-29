@@ -143,6 +143,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         self._plan_grip = 1.0
         self._interventions = 0  # times the safety filter changed our command
         self._opp_interventions = 0  # ...and the opponent's
+        self._rescues = 0  # filter steps (either car) while wheel to wheel
         self._safety = SafetyCheck(
             lap_m=self._lap_m,
             car_length_m=p.car_length_m,
@@ -400,7 +401,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             )
         self._opp, self._passes, self._contact = None, 0, False
         self._swaps, self._since_m = 0, 0.0
-        self._interventions = self._opp_interventions = 0
+        self._interventions = self._opp_interventions = self._rescues = 0
         self._grip = self._plan_grip = (
             tire_grip(self.tire, self._wear) if p.tires else 1.0
         )
@@ -538,9 +539,19 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             )
             if p.safety_filter and close:
                 before_hits = self._interventions
+                before_all = self._interventions + self._opp_interventions
                 (u_long, u_lat), opp_cmd = self._filter(
                     car, (u_long, u_lat), opp_car, opp_cmd
                 )
+                # A rescue: the filter had to change either car's command while
+                # they were wheel to wheel (overlapping, or nearly). Clean racing
+                # needs none; following in line (braking for the car ahead) is not
+                # counted.
+                gap_now = abs(wrap_gap(opp.state.s_m - self._state.s_m, self._lap_m))
+                if gap_now < p.car_length_m + p.rescue_margin_m:
+                    new = self._interventions + self._opp_interventions - before_all
+                    self._rescues += new
+                    filter_cost += p.rescue_penalty * new
                 # Racing so close that the filter must step in costs reward, so the
                 # driver learns moves that need no rescue (GT Sophy penalises every
                 # collision; here the filter prevents them, so its use is the cost).
@@ -684,6 +695,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             "swaps": self._swaps,
             "interventions": self._interventions,
             "opp_interventions": self._opp_interventions,
+            "rescues": self._rescues,
             "elapsed_s": self._steps * self.sim.dt_s,
             "off_track": off_track,
             "lap_completed": lap_completed,

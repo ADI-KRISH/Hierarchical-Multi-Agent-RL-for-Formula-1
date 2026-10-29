@@ -94,11 +94,18 @@ def test_section_start_is_no_faster_than_the_car_ahead() -> None:
 
 
 def test_section_won_needs_a_stuck_clean_pass() -> None:
-    base = {"section_won": True, "passes": 1, "contact": False, "off_track": False}
+    base = {
+        "section_won": True,
+        "passes": 1,
+        "contact": False,
+        "off_track": False,
+        "rescues": 0,
+    }
     assert section_won(base)
     assert not section_won({**base, "passes": 0})
     assert not section_won({**base, "section_won": False})
     assert not section_won({**base, "contact": True})
+    assert not section_won({**base, "rescues": 1})  # the filter saved it
 
 
 def test_without_section_nothing_changes() -> None:

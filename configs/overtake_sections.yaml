@@ -89,6 +89,7 @@ env:
   section_win_bonus: 30.0
   section_fail_penalty: 30.0
   section_tail_m: 100.0
+  rescue_penalty: 5.0
   opponent_features: true
   guard:
     react_gap_m: 60.0

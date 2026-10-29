@@ -455,6 +455,12 @@ class RaceEnvParams:
     # slower car could never be caught out of the tow). A design choice, not an F1
     # figure: 0.97 is ~10 km/h down at 350 km/h.
     slow_power_frac: float = 1.0
+    # Clean racing: a "rescue" is a no-crash filter step on either car while the
+    # cars are within a car length plus `rescue_margin_m` of each other (wheel to
+    # wheel). Each costs `rescue_penalty` on top of `intervention_penalty`, and a
+    # section battle with any rescue is not won (`agents.tactical.section_won`).
+    rescue_margin_m: float = 1.0
+    rescue_penalty: float = 0.0
     # Tactical env: also offer the `tactics.PULL_MOVES` (pull alongside now, even in
     # a braking zone or a corner). Changes the action and observation sizes, so
     # False = earlier runs and their models.

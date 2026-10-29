@@ -585,6 +585,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             self._steps += 1
             now = self._state
             if opp is not None:
+                opp_before = opp.state
                 opp.state = frenet_step(
                     opp_car, opp.state, ox, oy, self._kappa_at, dt, p.min_speed_ms
                 )
@@ -597,7 +598,15 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                     total -= p.fail_penalty
                     terminated = True
                     break
-                why = self._too_close(opp.state, now, (now.n_m - before.n_m) / dt)
+                # Closing sideways: our own sideways step toward it, counted only
+                # while the gap across is really shrinking (both cars following a
+                # line that sweeps across the road is not a chop).
+                shrink = abs(opp_before.n_m - before.n_m) - abs(opp.state.n_m - now.n_m)
+                mine = (now.n_m - before.n_m) * (
+                    1.0 if opp.state.n_m > now.n_m else -1.0
+                )
+                lat = min(shrink, mine) / dt
+                why = self._too_close(opp.state, now, lat)
                 if why:
                     self._dirty_steps += 1
                     self._dirty[why] += 1
@@ -685,7 +694,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
     ) -> str:
         """Closer than clean racing allows (`RaceEnvParams.clean_side_m` etc.):
         side by side with less air than ``clean_side_m`` between the cars, moving
-        (``my_lat_ms``, m/s sideways) across into its lane less than ``clean_chop_m``
+        (``my_lat_ms``: m/s toward it) across into its lane less than ``clean_chop_m``
         in front of its nose (a chop; a car that tucks in behind us is not), or behind
         in its lane less than ``clean_follow_m`` off its gearbox. Returns which
         ("side", "chop", "follow") or "" if clean."""
@@ -699,8 +708,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             return ""
         if gap > 0:
             return "follow" if nose_air < p.clean_follow_m else ""
-        toward = my_lat_ms * (1.0 if opp.n_m > me.n_m else -1.0)
-        if toward > CHOP_LAT_MS and nose_air < p.clean_chop_m:
+        if my_lat_ms > CHOP_LAT_MS and nose_air < p.clean_chop_m:
             return "chop"
         return ""
 

@@ -147,6 +147,7 @@ def test_too_close_rules() -> None:
     assert not at(6.5, 0.0)  # following 1 m off its gearbox
     assert at(5.8, 0.0) == "follow"  # 0.3 m off it
     assert at(-7.0, 0.5, 1.0) == "chop"  # cutting across 1.5 m in front of it
+    assert at(-7.0, -0.5, 1.0) == "chop"  # (from either side)
     assert not at(-7.0, 0.5)  # holding our line: it tucked in behind us
     assert not at(-9.0, 0.5, 1.0)  # 3.5 m clear: fine
     assert not at(-7.0, 3.0)  # ahead but not in its lane

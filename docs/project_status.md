@@ -279,3 +279,42 @@ validation, so the ceiling within one section is low in this sim: a single
 straight or corner is often too short to complete a clean pass on a car only
 slightly slower. Next: score passes over two or three sections (phase 2,
 combined battles).
+
+### Two-corner battles, air drag, longer view, trained defender (2026-10-29)
+
+Same strict clean rules; each battle now runs on to the exit of the NEXT corner
+(`sections.span_corners: 2`). Added, all opt-in (earlier configs unchanged):
+
+- **Air drag** (`aero_drag`): drag from `max_accel_g` and `max_speed_ms` (full
+  throttle just holds top speed); the tow cuts it 12% (`tow_drag_cut`). Physics
+  change for configs that use it.
+- **Longer view** (`plan_features`): the corner after next, metres left in the
+  battle, the car ahead's offset from the line and how it moved in the last second.
+  Saved policies load into the bigger observation (`tactical.load_grown`).
+- **Fairer side-by-side scoring** (`side_own_fault`): a squeeze by the other car
+  is no longer our dirty move.
+- **The trained defender** from the defender thread (`agents.defender_rl`, run 1
+  best) drives the `rival_ahead_slow` car (`run.defender_model`, scripts take
+  `--defender`).
+
+What each step did (validation, scripted driver, slow + guard_slow, 180 battles):
+two corners 17 (one corner 13-15); plus drag 23 (off-tracks 18 -> 9). Diagnosis of
+lost battles: mostly "still behind", stuck ~6.5 m back (car length + the filter's
+1 m) and rarely pulling out; dirty air is the largest single cost (without it 36).
+
+Training: overtake_multi and overtake_drag did not improve on their starting model;
+overtake_vs_defender (ent_coef 0.01) peaked at 100k decisions (45/270 validation vs
+37 at the start) and was stopped at 400k.
+
+Held-out (5 unseen tracks, 525 battles, 0 contacts for both):
+
+| car ahead | model | scripted |
+|---|---|---|
+| slow | 10/175 | 13/175 |
+| guard_slow (scripted defender) | 32/175 | 37/175 |
+| trained defender | 14/175 | 15/175 |
+| total | 56/525 | 65/525 |
+
+Against slow + guard_slow the model went from 30/350 (one corner, no drag) to
+42/350. The scripted driver is still a little ahead; PPO has stalled at about its
+level. Demo: https://claude.ai/artifact/1nc7cSww9HWwToDrQsB5DA

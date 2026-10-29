@@ -787,6 +787,20 @@ is an F1 figure (each says so in `config.py`).
 | Trainer and comparison | `src/f1rl/agents/strategy.py`, `configs/strategy_ppo.yaml` | `uv run python -m f1rl.train --config configs/strategy_ppo.yaml` trains PPO (train tracks, checkpoint chosen on validation tracks). `uv run python -m f1rl.agents.strategy --policy baseline --policy random --policy <model.zip>` runs paired races (same seed = same rivals and grid). |
 | Tests | `tests/test_race.py`, `tests/test_strategy_env.py` | On a synthetic oval, no download needed. |
 
+**Cloud pilot (2026-10-29, `configs/strategy_ppo.yaml`, 300k laps, seed 0, ~20 min
+on 4 cores).** Paired races, 10 cars, stand-in driver:
+
+| | validation (12 races) | held-out (20 races) |
+|---|---|---|
+| rule-based M->H one-stop | place 4.17 | place 4.50, 4476.5 s |
+| random | - | place 9.15, 90% legal |
+| PPO (best = last checkpoint, still improving) | place 2.75, 11 s quicker | place 4.20, 6 s quicker, 100% legal |
+
+It learned a two-stop race: conserve early, push before a stop, softs in the middle
+stint. It beats the rule-based plan on unseen tracks, by less than on validation.
+This only says the env is learnable; the numbers mean nothing for F1 until the
+compounds are calibrated and the real driver is plugged in.
+
 **Plugging in the real driver later.** Two hooks: (1) replace each track's
 `LapTable` with one measured from the trained driver (lap time at each grip level
 and fuel load); (2) set `attack_skill_s` / `defend_skill_s` (or refit

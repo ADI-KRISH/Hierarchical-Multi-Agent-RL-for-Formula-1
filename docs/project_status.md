@@ -203,3 +203,46 @@ start 52.5% (2 contacts, real attack 4/22, defend 16/18); 100k 41.0%; 200k 42.6%
 `model_best.zip`); 300k 49.2% (1 contact, attack 7/22, defend 11/18). Attacking was improving,
 defending fell. Only `model_best.zip` (200k) was saved. Next: continue from it with a defend-specific bonus and more
 defend starts, or a longer run overnight.
+
+### Defending sparring driver (2026-10-29, branch `claude/project-thread-lsit7b`)
+
+A scripted defender for the overtaking driver to train against, corner by corner:
+`f1rl.agents.guard`, opponent kinds `guard_slow` (grip 0.80), `guard_mid` (0.88)
+and `guard_equal` (0.95), settings in `config.GuardParams` (YAML `env.guard:`),
+config `configs/guard_sparring.yaml`, check with `scripts/guard_gate.py`.
+
+What it does, per corner (a section = the straight and braking zone before one
+apex, so any `start_s` works): when the car behind is close enough to dive (time
+gap < 0.35 s and, at its closing speed, alongside by the braking point) it makes
+ONE move toward the corner's inside, finished before the braking zone; never in a
+braking zone, never within a car length + 8 m of the car behind, never once that
+car is alongside (front wheels level with its rear wheels). Then it leaves that car
+room (3 m centre to centre, or what it already has), holds its spot on the road
+under braking, and rejoins the line after the apex.
+
+Bugs found while tuning: it moved to the OUTSIDE when the line was already on the
+inside; it gave way as soon as a car was a car length back (no overlap yet); it
+drifted back out toward a car on the outside under braking (a contact); and its
+default "back to the line" path differed from the other scripted cars, so even a
+guard that never moved behaved differently (2 contacts). All fixed.
+
+Gate (scripted tactician attacking; "line" never attacks; pass must stick 600 m;
+90 s battles; won excludes contact and off-track):
+
+| car ahead | 6 training tracks, 48 each: tactician / line | 3 validation tracks, 24 each: tactician / line | contacts |
+|---|---|---|---|
+| equal | 14 / 2 | 2 / 3 | 0 |
+| guard_equal | 10 / 0 | 5 / 5 | 0 |
+| slow | (24 each) 13 / 5 | 20 / 3 | 1 (slow, line) |
+| guard_slow | (24 each) 15 / 8 | 16 / 11 | 0 |
+
+Read: at equal pace it is about as hard to pass as a car that holds the line
+(harder on the training tracks, easier on the validation ones; small samples), and
+it shuts the dive-bomb door, so the passes it allows are feints, switchbacks and
+better exits. At the slow pace a car 15% quicker in corners gets by anyway; the
+"line" control passes it more than a plain slow car because the plain one is only
+hard to pass when the follower never pulls out. The attacker goes off more often
+against a slow guard (it runs round the outside of a car holding the inside), which
+is the attacker's mistake to learn. 0 contacts against any guard in 480 battles.
+The guard's own "squeeze" counter (moving > 5 cm per 0.1 s toward a car alongside)
+is not quite zero: up to ~8 steps per 24 battles.

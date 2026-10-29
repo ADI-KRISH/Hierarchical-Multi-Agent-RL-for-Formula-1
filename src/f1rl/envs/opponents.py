@@ -4,6 +4,8 @@ race-craft depending on the kind (`config.OPPONENT_KINDS`):
 - ``slow`` / ``equal``  hold the racing line;
 - ``defender``  covers the side a car behind threatens (once, then holds: no weaving)
   and takes the inside line before a corner when a car is close behind;
+- ``guard_*``  the defending sparring partner (`f1rl.agents.guard`): closes the
+  inside of each corner with one move, by the rules, then rejoins the line;
 - ``attacker``  dive-bombs the next corner when it is within reach of the car ahead;
 - ``rival_ahead`` / ``rival_behind``  self-play: a learned policy picks its moves
   (`TacticalEnv.rival`); like the learner, it does not lift for a car alongside --
@@ -13,13 +15,14 @@ All of them follow the etiquette of the sport: a car that has its nose alongside
 ahead gets room (the opponent lifts), and none of them moves in a braking zone.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
+from f1rl.agents.guard import Guard
 from f1rl.agents.path_driver import PathDriver
 from f1rl.agents.tactics import Corner, corners_ahead, make_move
-from f1rl.config import GRAVITY_M_S2
+from f1rl.config import GRAVITY_M_S2, GuardParams
 from f1rl.models.frenet import FrenetState
 from f1rl.models.maneuver import Maneuver
 
@@ -65,6 +68,7 @@ class Opponent:
     maneuver: Maneuver | None = None
     cooldown_until_s: float = -1e9
     yielding: bool = False
+    guard: Guard | None = field(default=None)  # set for ``guard_*`` kinds
 
     def _shift_now(self) -> float:
         line_n, _, _ = self.driver.base.line_state(self.state.s_m)
@@ -80,6 +84,7 @@ class Opponent:
         shield: bool = True,
         give_way: bool = True,
         soft_follow: bool = False,
+        car_length_m: float = 5.5,
     ) -> np.ndarray:
         """The opponent's [throttle/brake, steer] for the next decision."""
         me = self.state
@@ -88,6 +93,10 @@ class Opponent:
         if self.maneuver is not None and me.s_m > self.maneuver.end_s:
             self.maneuver = None
         shift = self._shift_now()
+        if self.guard is not None:
+            return self._guard_command(
+                car, lap_m, car_length_m, overlap_m, extra_speed_ms, shield, soft_follow
+            )
         corners = corners_ahead(self.driver, me.s_m)
         free = self.maneuver is None and (
             not corners or corners[0].brake_m > NO_MOVE_BRAKE_M
@@ -145,6 +154,56 @@ class Opponent:
             )
         return action
 
+    def _guard_command(
+        self,
+        car: FrenetState,
+        lap_m: float,
+        car_length_m: float,
+        overlap_m: float,
+        extra_speed_ms: float,
+        shield: bool,
+        soft_follow: bool,
+    ) -> np.ndarray:
+        """A ``guard_*`` car: `Guard` picks the line; it never yields (the no-crash
+        filter keeps both cars clear) but lifts behind a car it follows."""
+        assert self.guard is not None
+        me = self.state
+        if self.maneuver is not None and me.s_m > self.maneuver.end_s:
+            self.maneuver = None
+        current = self.maneuver or Maneuver(
+            me.s_m, ((0.0, self._shift_now()), (40.0, 0.0))
+        )
+        new = self.guard.update(self.driver, me, car, lap_m, current, car_length_m)
+        if new is not None:
+            self.maneuver = current = new
+        # With no move of its own it drifts back to the line from wherever it is,
+        # re-planned every step, exactly like the other scripted cars.
+        action = self.driver.act(
+            {
+                "distance_m": me.s_m,
+                "lateral_offset_m": me.n_m,
+                "heading_rad": me.psi_rad,
+                "speed_ms": me.speed_ms,
+            },
+            current,
+            extra_speed_ms,
+        )
+        gap = wrap_gap(car.s_m - me.s_m, lap_m)
+        closing = max(0.0, me.speed_ms - car.speed_ms)
+        if (
+            shield
+            and abs(car.n_m - me.n_m) < overlap_m - 0.7
+            and 0.0 < gap < FOLLOW_GAP_M + closing
+        ):
+            action[0] = follow_brake(
+                float(action[0]),
+                gap,
+                closing,
+                self.driver.car.max_braking_g * GRAVITY_M_S2,
+                soft_follow,
+            )
+        return action
+
     def _threat(self, car: FrenetState, me: FrenetState) -> float:
         line_n, _, _ = self.driver.base.line_state(car.s_m)
         return car.n_m - line_n
@@ -165,7 +224,17 @@ class Opponent:
         return None
 
 
-def place(kind: str, driver: PathDriver, s_m: float, side: float) -> Opponent:
-    """An opponent of ``kind`` on its line at ``s_m``, at the line's speed."""
+def place(
+    kind: str,
+    driver: PathDriver,
+    s_m: float,
+    side: float,
+    guard: GuardParams | None = None,
+) -> Opponent:
+    """An opponent of ``kind`` on its line at ``s_m``, at the line's speed.
+    ``guard`` sets up a ``guard_*`` car (defaults to `GuardParams()`)."""
     n, psi, v = driver.base.line_state(s_m)
-    return Opponent(kind, driver, FrenetState(s_m, n, psi, v), side)
+    opp = Opponent(kind, driver, FrenetState(s_m, n, psi, v), side)
+    if kind.startswith("guard"):
+        opp.guard = Guard(guard or GuardParams())
+    return opp

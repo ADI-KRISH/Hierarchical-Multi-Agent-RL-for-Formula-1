@@ -466,7 +466,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                 )
                 self._opp_drivers[kind] = driver
             side = float(self.np_random.choice([-1.0, 1.0]))
-            self._opp = place(kind, driver, self._state.s_m + sign * gap, side)
+            self._opp = place(kind, driver, self._state.s_m + sign * gap, side, p.guard)
             self._ahead = self._held = where == "behind"
             if p.safety_filter:
                 self._opp.state = self._recoverable(self._opp.state, sign * gap)
@@ -498,6 +498,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                 shield=p.follow_shield and (p.shield_in_tow or opp_tow == 0.0),
                 give_way=p.opponent_yield,
                 soft_follow=p.soft_follow,
+                car_length_m=p.car_length_m,
             )
             opp_car = replace(
                 self.car,

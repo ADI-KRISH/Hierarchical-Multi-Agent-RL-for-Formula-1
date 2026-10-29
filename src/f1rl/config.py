@@ -193,6 +193,70 @@ class AnalyticsParams:
 
 
 @dataclass(frozen=True)
+class GuardParams:
+    """The defending sparring driver (``guard_*`` opponents, `f1rl.agents.guard`).
+
+    It defends each corner on its own: one move per straight (toward the inside of
+    the next corner, before the braking zone, never once the attacker is
+    alongside), then back to the racing line after the apex. The rules follow the
+    FIA Sporting Regulations' driving standards (one change of direction to defend,
+    no moves under braking, leave a car's width to a car alongside). The distances
+    and times below are design choices that set how hard it is to pass, not F1
+    figures. Lower `inside_gap_s` / higher `reaction_s` = an easier sparring partner.
+    """
+
+    # React to a car behind within this many metres; ignore it further back.
+    react_gap_m: float = 60.0
+    # Close the inside of the next corner once the car behind is within this time
+    # gap (s, gap / our speed) and the corner's braking point is within
+    # `inside_from_m`. 0.35 s is about 25 m at 75 m/s: close enough to dive.
+    inside_gap_s: float = 0.35
+    inside_from_m: float = 300.0
+    # ...and only if, at the speed it is closing now, it would be within a car
+    # length + this (m) of us by the braking point: one that cannot get alongside
+    # is not worth the time a defensive line costs (~0.1-0.4 s a corner here).
+    threat_margin_m: float = 4.0
+    # Before that, cover a car that has pulled out toward the corner's inside by at
+    # least this much (m, sideways from us) on the straight.
+    cover_lateral_m: float = 1.0
+    # Wait this long (s, as distance at our speed) after a threat appears before
+    # moving: the gap a feint (``dummy``) can use. 0 = instant.
+    reaction_s: float = 0.15
+    # The move needs at least this much road (m) before the braking point; shorter
+    # would be a lunge across the track (3 m sideways at 80 m/s over 60 m already
+    # peaks at ~2.7 g of lateral acceleration).
+    min_ramp_m: float = 60.0
+    ramp_m: float = 120.0
+    # ...and must finish this far (m) before the braking point.
+    settle_m: float = 15.0
+    # How far inside it goes: it leaves this much room (m, for a car's centre) on
+    # the inside, under a car width so a dive does not fit. Shifts under
+    # `min_shift_m` are not worth making; never more than `max_shift_m`.
+    inside_leave_m: float = 1.2
+    min_shift_m: float = 1.0
+    max_shift_m: float = 3.0
+    # Share of the inside shift still held at the apex (the line itself is on the
+    # inside there): more = a tighter, slower corner that is harder to undercut.
+    apex_keep: float = 0.0
+    # The door is shut over this stretch (m) before the braking point.
+    door_m: float = 60.0
+    # Back on the racing line this far (m) after the apex, or before the next
+    # braking zone if that comes first.
+    recover_m: float = 120.0
+    # A car is alongside once it overlaps us by this much (m): its front wheels
+    # level with our rear wheels (~1 m from each end of a 5.5 m car). From then on
+    # no moves toward it until it has dropped back or passed.
+    overlap_m: float = 1.5
+    # No new move once the car behind is within a car length + this (m, centre to
+    # centre): moving
+    # across its nose that late forces it to swerve (or off the road).
+    min_move_gap_m: float = 8.0
+    # ...and it keeps its centre this far (m) from that car's centre sideways: a
+    # car width (2.0 m) plus a gap.
+    room_m: float = 3.0
+
+
+@dataclass(frozen=True)
 class RaceEnvParams:
     """Tunables for `RaceEnv` (env v2: the car steers, so it chooses its line).
 
@@ -350,6 +414,8 @@ class RaceEnvParams:
     # default so earlier runs reproduce; every new config turns it on. Design
     # choices, not F1 figures.
     safety_filter: bool = False
+    # The defending sparring driver's settings (``guard_*`` opponents).
+    guard: GuardParams = GuardParams()
     safety_horizon_s: float = 2.5  # was 1.5; 1.5 s missed side-by-side corner entries
     safety_max_horizon_s: float = 3.0
     safety_dt_s: float = 0.05
@@ -419,6 +485,11 @@ OPPONENT_KINDS: Final = {
     "slow": (0.80, "ahead"),  # about 8% slower through corners
     "equal": (0.95, "ahead"),  # same pace: a real battle
     "defender": (0.95, "ahead"),  # same pace, covers and defends the inside
+    # Defending sparring partners (`f1rl.agents.guard`): race-craft by the book, one
+    # move per corner, at three paces. Slow = the "slow" car's pace; equal = ours.
+    "guard_slow": (0.80, "ahead"),
+    "guard_mid": (0.88, "ahead"),
+    "guard_equal": (0.95, "ahead"),
     "attacker": (0.97, "behind"),  # a touch quicker; tries to pass the car
     "attacker_equal": (0.95, "behind"),  # same pace; tries to pass the car
     # Self-play: the same pace as the learner (`FollowerParams.grip_fraction`), its

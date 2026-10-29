@@ -41,7 +41,7 @@ from f1rl.agents.ppo import git_sha
 from f1rl.agents.racer import prepare_tracks, resolve_track_names
 from f1rl.agents.tactician import choose
 from f1rl.agents.tactics import MOVES
-from f1rl.config import EXAMPLE_CAR, CarParams, RaceEnvParams, SimParams
+from f1rl.config import EXAMPLE_CAR, CarParams, GuardParams, RaceEnvParams, SimParams
 from f1rl.envs.tactical_env import TacticalEnv
 from f1rl.real_starts import ROLES, RealStart, by_track, load_real_starts
 from f1rl.scenarios import SCENARIOS, run_one, run_real
@@ -113,6 +113,8 @@ class TacticalConfig:
         ):
             if key in overrides:
                 overrides[key] = tuple(overrides[key])
+        if isinstance(overrides.get("guard"), dict):
+            overrides["guard"] = GuardParams(**overrides["guard"])
         return RaceEnvParams(**{"tactical": True, "tires": True, **overrides})
 
     def sim_params(self, seed: int) -> SimParams:

@@ -111,6 +111,13 @@ class TacticalRun:
     section_priority: bool = True
     section_eval_opponents: list[str] = field(default_factory=list)
     section_eval_gap_m: float = 12.0
+    # Defender training (`agents.defender_rl`): battles per validation track (from
+    # this many points round the lap) at every evaluation...
+    eval_starts: int = 6
+    # ...and who it imitates first (``bc_decisions`` > 0): "tactician" (the
+    # rule-based defender) or "line" (never defend; the policy then has to learn
+    # when a defending move pays).
+    bc_teacher: str = "tactician"
 
 
 @dataclass(frozen=True)
@@ -137,6 +144,7 @@ class TacticalConfig:
             "opponent_gap_m",
             "real_gap_m",
             "pass_window_m",
+            "tactical_moves",
         ):
             if key in overrides:
                 overrides[key] = tuple(overrides[key])

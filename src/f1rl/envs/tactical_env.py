@@ -63,7 +63,10 @@ class TacticalEnv(RaceEnv):
         super().__init__(car, track, sim, params, reference, mode)
         self.option_steps = option_steps
         # The moves this env offers: `MOVES`, plus `PULL_MOVES` if turned on.
-        self.moves: tuple[str, ...] = (
+        unknown = set(params.tactical_moves) - set(MOVES)
+        if unknown:
+            raise ValueError(f"unknown tactical_moves: {sorted(unknown)}")
+        self.moves: tuple[str, ...] = params.tactical_moves or (
             MOVES
             + (PULL_MOVES if params.pull_moves else ())
             + (LANE_MOVES if params.lane_moves else ())
@@ -85,6 +88,10 @@ class TacticalEnv(RaceEnv):
         # Self-play: picks the moves of a ``rival_*`` opponent from that car's own
         # view of the race (same observation layout as ours). None = scripted.
         self.rival: Callable[[ObsType], int] | None = None
+        # A rival trained in another env (e.g. `agents.defender_rl`): it sees the
+        # plain layout (base observation, the running move out of `MOVES`, the next
+        # corner), whatever moves and extra features this env has.
+        self.rival_plain_obs = False
         self._opp_move = "line"
 
     def reset(
@@ -204,11 +211,31 @@ class TacticalEnv(RaceEnv):
         self._maneuver = Maneuver(me.s_m, ((0.0, here), (CHOP_LOOK_M, here)))
         self.chop_holds += 1
 
-    def _may_change(self, corners: list[Any]) -> bool:
-        """Free to start a new move: not in a braking zone, none in progress."""
+    def _may_change(self, corners: list[Any], want: str = "line") -> bool:
+        """Free to start a new move: not in a braking zone, none in progress; with
+        `RaceEnvParams.defend_rules`, no cover or inside across a close car's nose."""
         in_zone = bool(corners) and corners[0].brake_m < NO_MOVE_BRAKE_M
         running = self._maneuver is not None and self._state.s_m < self._maneuver.end_s
-        return not in_zone and not (running and self._move == "cover")
+        if in_zone or (running and self._move == "cover"):
+            return False
+        p, opp = self.params, self._opp
+        if p.defend_rules and want in ("cover", "inside") and opp is not None:
+            behind = -wrap_gap(opp.state.s_m - self._state.s_m, self._lap_m)
+            if 0.0 < behind < p.car_length_m + p.guard.min_move_gap_m:
+                return False
+        return True
+
+    def _plain_obs(self) -> ObsType:
+        """The plain observation layout (see `rival_plain_obs`)."""
+        corners = corners_ahead(self._driver(), self._state.s_m)
+        brake = min(corners[0].brake_m, 300.0) / 300.0 if corners else 1.0
+        side = corners[0].side if corners else 0.0
+        hot = np.zeros(len(MOVES), dtype=np.float32)
+        if self._move in MOVES:
+            hot[MOVES.index(self._move)] = 1.0
+        return np.concatenate(
+            [self._observation(), hot, np.array([brake, side], dtype=np.float32)]
+        ).astype(np.float32)
 
     def rival_observation(self) -> ObsType:
         """What the opponent car sees: our observation with the two cars swapped."""
@@ -220,19 +247,44 @@ class TacticalEnv(RaceEnv):
         self._tow_now = self._tow(self._state, opp.state)
         self._swapped = True
         try:
-            return self._tactical_obs()
+            return self._plain_obs() if self.rival_plain_obs else self._tactical_obs()
         finally:
             self._swapped = False
             opp.state, self._state = self._state, mine[0]
             self._last, self._move, self._tow_now = mine[1], mine[2], mine[3]
 
+    def _tactician_for_rival(self) -> str:
+        """The rule-based tactician's move for the opponent, from its side: the two
+        cars (and their running moves) swapped while it looks."""
+        from f1rl.agents.tactician import choose  # here: tactician imports this env
+
+        opp = self._opp
+        assert opp is not None
+        mine = (self._state, self._maneuver, self._move, self._tow_now)
+        self._state, opp.state = opp.state, self._state
+        self._maneuver, self._move = opp.maneuver, self._opp_move
+        self._tow_now = self._tow(self._state, opp.state)
+        try:
+            return choose(self)
+        finally:
+            opp.state, self._state = self._state, mine[0]
+            self._maneuver, self._move, self._tow_now = mine[1], mine[2], mine[3]
+
     def _rival_move(self) -> None:
         """Self-play: the rival policy picks the opponent's move, under the same rules
-        as ours (no new move in a braking zone, a cover is a single move)."""
+        as ours (no new move in a braking zone, a cover is a single move, and no
+        cover or inside across our nose when we are close behind). A
+        ``rival_tactician*`` car is driven by the rule-based tactician instead."""
         opp = self._opp
-        if self.rival is None or opp is None or not opp.kind.startswith("rival"):
+        if opp is None or not opp.kind.startswith("rival"):
             return
-        want = self.moves[int(self.rival(self.rival_observation()))]
+        if opp.kind.startswith("rival_tactician"):
+            want = self._tactician_for_rival()
+        elif self.rival is None:
+            return
+        else:
+            # The rival's index is into its own move list, which starts with MOVES.
+            want = MOVES[int(self.rival(self.rival_observation()))]
         s = opp.state.s_m
         running = opp.maneuver is not None and s < opp.maneuver.end_s
         if want == self._opp_move and running:
@@ -241,6 +293,10 @@ class TacticalEnv(RaceEnv):
         in_zone = bool(corners) and corners[0].brake_m < NO_MOVE_BRAKE_M
         if running and (in_zone or self._opp_move == "cover"):
             return
+        if want in ("cover", "inside"):
+            behind = wrap_gap(opp.state.s_m - self._state.s_m, self._lap_m)
+            if 0.0 < behind < self.params.car_length_m + self.params.guard.min_move_gap_m:
+                want = "line"  # too late to move across our nose
         shift = opp.state.n_m - opp.driver.base.line_state(s)[0]
         threat = 0.0
         if wrap_gap(self._state.s_m - s, self._lap_m) < 0:  # we are behind it
@@ -269,7 +325,13 @@ class TacticalEnv(RaceEnv):
             or self._maneuver is None
             or s > self._maneuver.end_s
         ):
-            if self._may_change(corners) or self._maneuver is None or attacking:
+            allowed = self._may_change(corners, want) or attacking
+            if not allowed and self._maneuver is None:
+                if self.params.defend_rules:  # refused: start on the racing line
+                    self.refused += 1
+                    want = "line"
+                allowed = True
+            if allowed:
                 shift = self._state.n_m - d.base.line_state(s)[0]
                 threat = 0.0
                 if self._opp is not None:

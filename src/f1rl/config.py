@@ -432,6 +432,14 @@ class RaceEnvParams:
     # and never finished one, and a low-entropy one never tried another.
     commit_moves: bool = False
     commit_max_decisions: int = 24
+    # Tactical env: the moves the agent may pick (its action space, in this order).
+    # Empty = all of `agents.tactics.MOVES`. A defender uses ("line", "cover",
+    # "inside"). The observation still shows the running move out of all MOVES.
+    tactical_moves: tuple[str, ...] = ()
+    # Defending rules for the agent's own moves (as `GuardParams`): no new cover or
+    # inside once the car behind is within a car length + `guard.min_move_gap_m`
+    # (moving across its nose that late forces it to swerve). False = earlier runs.
+    defend_rules: bool = False
     # Extra opponent features: its sideways speed, a pass waiting to stick (+1 when
     # we lead and it has not stuck yet, -1 when we were passed and it has not stuck,
     # scaled by how far into `pass_hold_m` it is), whether it is in our tow (a
@@ -625,6 +633,13 @@ OPPONENT_KINDS: Final = {
     # moves picked by a copy of a learned policy (`TacticalEnv.rival`).
     "rival_ahead": (0.95, "ahead"),
     "rival_behind": (0.95, "behind"),
+    # A learned defender as the car ahead at the "slow" car's pace (its policy is set
+    # as `TacticalEnv.rival`, see `f1rl.agents.defender_rl.load_defender`).
+    "rival_ahead_slow": (0.80, "ahead"),
+    # Attackers for training a defender: the rule-based race-craft driver
+    # (`agents.tactician`) picks this car's moves from its own view of the race.
+    "rival_tactician": (0.95, "behind"),
+    "rival_tactician_fast": (0.97, "behind"),
 }
 
 

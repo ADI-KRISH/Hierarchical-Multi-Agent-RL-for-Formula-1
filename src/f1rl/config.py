@@ -653,3 +653,132 @@ class RealStartParams:
     # are this many laps older than the attacker's; otherwise it is an equal-pace
     # "defender". (Fresh-tyre deltas are why most real passes happen.)
     fresh_tyre_laps: float = 8.0
+
+
+# --- Strategy Agent: whole-race simulation (`f1rl.models.race`, `envs.strategy_env`) --
+
+#: A Grand Prix runs the fewest complete laps that exceed 305 km (FIA Formula One
+#: Sporting Regulations, race distance; Monaco is the one exception at 260 km).
+RACE_MIN_DISTANCE_M: Final = 305_000.0
+
+#: Most fuel a car may use from start to finish: 110 kg (FIA Formula One Technical
+#: Regulations, 2019-2025 seasons).
+MAX_RACE_FUEL_KG: Final = 110.0
+
+#: Dry-weather tyre compounds, softest first. In a dry race every car must use at
+#: least two of them (FIA Formula One Sporting Regulations, tyre-use rule).
+COMPOUNDS: Final = ("soft", "medium", "hard")
+
+
+@dataclass(frozen=True)
+class CompoundParams:
+    """One tyre compound. **Uncalibrated design choices**, not Pirelli figures: set
+    so softer = quicker but shorter-lived and a one- or two-stop race both make
+    sense. Calibrate from FastF1 stint lap times (2021-2022 load on the laptop)
+    before reading any strategy result as F1.
+    """
+
+    # Grip multiplier of a new tyre (1.0 = the car's own limits).
+    grip: float
+    # Seconds of driving at push 0.5 that wear a new tyre out (wear 0 -> 1); see
+    # `StrategyParams.push_wear_ratio`. Grip against wear follows `TireParams`.
+    life_s: float
+
+
+@dataclass(frozen=True)
+class StrategyRewardParams:
+    """Reward of `StrategyEnv`. Simulation design choices."""
+
+    # Per second our lap is slower than the reference lap (a fresh medium at normal
+    # push with half the fuel): sums to minus race time, the main objective.
+    time_weight: float = 0.1
+    # Per place gained (lost: negative) on a lap.
+    position_weight: float = 1.0
+    # At the flag, per place behind the winner.
+    finish_weight: float = 0.5
+    # At the flag, when the car never ran two dry compounds (a disqualification).
+    rule_penalty: float = 50.0
+
+
+@dataclass(frozen=True)
+class StrategyParams:
+    """Lap-by-lap race simulation for the Strategy Agent. Simulation design choices
+    unless a comment cites a source; none of the uncalibrated ones is an F1 figure.
+    """
+
+    # Cars in the race, ours included. 20 on a real grid; fewer runs faster.
+    n_cars: int = 10
+    soft: CompoundParams = CompoundParams(grip=1.0, life_s=1900.0)
+    medium: CompoundParams = CompoundParams(grip=0.985, life_s=3000.0)
+    hard: CompoundParams = CompoundParams(grip=0.97, life_s=4500.0)
+    # Time a pit stop adds to the lap it is made on (s): pit lane at the speed limit
+    # plus the stop. Uncalibrated; FastF1 pit-in/pit-out times can calibrate it.
+    pit_loss_s: float = 22.0
+    # Fuel at the start (kg), burnt evenly so the car finishes empty.
+    start_fuel_kg: float = MAX_RACE_FUEL_KG
+    # Stand-in driver: lap time = limit lap on the optimal line at the driver's
+    # grip * (1 + driver_gap). 0.011 is our scripted PathDriver's measured average
+    # gap to the optimal lap over the 24 usable TUM tracks (docs/project_status.md).
+    driver_gap: float = 0.011
+    # Push levels, 0 = conserve the tyres .. 1 = attack. The driver plans for
+    # conserve_grip_fraction of the grip at 0 up to attack_grip_fraction at 1
+    # (linear between); attack is `FollowerParams.grip_fraction`. A narrower span
+    # than `RaceEnvParams.conserve_grip_fraction` (0.85): over a whole race, tyre
+    # management trades a few tenths a lap, not seconds.
+    push_levels: tuple[float, ...] = (0.0, 0.25, 0.5, 0.75, 1.0)
+    attack_grip_fraction: float = 0.95
+    conserve_grip_fraction: float = 0.92
+    # Tyre wear grows steeply near the limit: wear per lap is lap_time / life_s at
+    # push 0.5, times push_wear_ratio ** (push - 0.5). So attacking wears the tyres
+    # this many times faster than conserving.
+    push_wear_ratio: float = 3.0
+    # Rivals' car pace: each rival's grip is ours times 1 + U(-spread, +spread).
+    car_pace_spread: float = 0.015
+    # Following within this gap (s) at the start of a lap costs the whole lap this
+    # share of grip (dirty air). Smaller than `RaceEnvParams.dirty_air_loss`, which
+    # applies only within 25 m in corners.
+    dirty_air_gap_s: float = 1.0
+    dirty_air_loss: float = 0.005
+    # Overtaking odds when a quicker car catches a slower one: probability of a
+    # pass on a lap = sigmoid((pace advantage - pass_delta_s) / pass_slope_s), with
+    # the pace advantage the two lap times' difference (s). A car that does not
+    # pass crosses the line min_gap_s behind. These stand in for the Driver Agent's
+    # race-craft until its real pass/defend rates are measured.
+    pass_delta_s: float = 0.6
+    pass_slope_s: float = 0.25
+    min_gap_s: float = 0.3
+    # Our driver's race-craft relative to the rivals (s of pace advantage added when
+    # we attack, taken away from a rival attacking us). 0 = as good as the field.
+    # Hook for the trained Driver Agent's measured pass and defend rates.
+    attack_skill_s: float = 0.0
+    defend_skill_s: float = 0.0
+    # Tracks that make a race: one is drawn per episode.
+    tracks: tuple[str, ...] = ()
+    # Lap-time table of the stand-in driver: grip multipliers from grip_min to
+    # grip_max in grip_step steps, and this many fuel loads from empty to full.
+    grip_min: float = 0.6
+    grip_max: float = 1.05
+    grip_step: float = 0.01
+    fuel_points: int = 5
+    reward: StrategyRewardParams = StrategyRewardParams()
+
+    def compound(self, name: str) -> CompoundParams:
+        if name not in COMPOUNDS:
+            raise KeyError(f"unknown compound {name!r}; known: {COMPOUNDS}")
+        params: CompoundParams = getattr(self, name)
+        return params
+
+
+@dataclass(frozen=True)
+class StrategyBaselineParams:
+    """The rule-based strategy (`agents.strategy_baseline`): a fixed plan, as a race
+    team would write it before the start. Design choices."""
+
+    # Compound per stint, first to last: one stop per change.
+    stints: tuple[str, ...] = ("medium", "hard")
+    # Share of the race distance after which each stop is made (one per stop).
+    stop_fractions: tuple[float, ...] = (0.45,)
+    # Push level (index into `StrategyParams.push_levels`) for the whole race.
+    push_index: int = 2
+    # Pit early, whatever the plan, once wear passes this.
+    max_wear: float = 0.8

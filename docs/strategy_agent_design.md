@@ -1,10 +1,11 @@
 # FormulaOneRL: Driver Agent and Strategy Agent Architecture
 
-> **Status: design doc, not started.** This is the detailed design for Phase 8's
-> two-agent hierarchy — see `docs/roadmap.md`. Earliest realistic entry point is
-> after Phase 5 (Driver Agent beats the baseline) or Phase 6 (dashboard), and only
-> once the user explicitly greenlights it. Nothing here is implemented; treat this
-> as the spec to build from *when* that happens, not a description of current code.
+> **Status (2026-10-29): race simulation, rule-based baseline and PPO trainer built;
+> the Strategy Agent is not trained for real yet.** It races with a *stand-in*
+> driver (a lap-time table), because the Driver Agent cannot defend yet and only
+> partly overtakes. See "What is built" at the end of this file. Sections 1-17 are
+> the full design; the code covers pits, compounds, tyre wear, push level, fuel and
+> rivals, not yet ERS, safety cars or weather.
 > The condensed version of this same vision lives in `docs/context.md`; this file
 > is the detailed version it points to.
 
@@ -766,3 +767,32 @@ rewrite):
 * The Driver Agent's observation needs the strategy mode vector `g_t` appended
   — a small, mechanical change to `DriverEnv`'s observation space once the rest
   exists.
+
+
+---
+
+## What is built (2026-10-29)
+
+The strategist decides once a lap, so it trains on a lap-by-lap race model rather
+than the 50 Hz driving sim. Everything is seeded; none of the uncalibrated values
+is an F1 figure (each says so in `config.py`).
+
+| Piece | Where | What it does |
+|---|---|---|
+| Race model | `src/f1rl/models/race.py` | Pure functions: race length (fewest laps over 305 km, FIA), a car's lap (compound grip, tyre wear, push level, fuel, dirty air, pit loss), and cars meeting on track (`resolve_lap`: a quicker car passes with odds that grow with its pace advantage, or follows 0.3 s behind; a car in the pits passes and is passed freely). |
+| Stand-in driver | `LapTable` in `models/race.py` | Limit lap on the track's optimal line (g-g simulator) over grip x fuel, times 1.011 (our PathDriver's measured gap). Fuel only lowers acceleration (same force, more mass). Cached per track under `data/strategy/`. |
+| Parameters | `StrategyParams`, `CompoundParams`, `StrategyRewardParams`, `StrategyBaselineParams` in `config.py` | Cited: 305 km, 110 kg fuel, two-compound rule. Uncalibrated design choices: compound grip and life, pit loss 22 s, push span 0.92-0.95 of grip, attack wears tyres 3x faster than conserve, car pace spread +/-1.5%, overtaking odds. |
+| Environment | `src/f1rl/envs/strategy_env.py` | `StrategyEnv`: one Grand Prix, one step per lap. Action `[pit: stay/soft/medium/hard, push level 0-4]`; the first action picks the starting tyres for free. 20 observations (race progress, place, gaps, tyres, fuel, rule met, rivals' tyres). Reward: -0.1 per second slower than a reference lap, +1 per place gained, -0.5 per final place behind the winner, -50 if only one compound was used. |
+| Rule-based strategy | `src/f1rl/agents/strategy_baseline.py` | `FixedPlan`: medium -> hard at 45% distance, normal push, early stop if wear > 0.8. Rivals draw variants (M-H, H-M, S-H, S-M-H) with random stop laps and push. |
+| Trainer and comparison | `src/f1rl/agents/strategy.py`, `configs/strategy_ppo.yaml` | `uv run python -m f1rl.train --config configs/strategy_ppo.yaml` trains PPO (train tracks, checkpoint chosen on validation tracks). `uv run python -m f1rl.agents.strategy --policy baseline --policy random --policy <model.zip>` runs paired races (same seed = same rivals and grid). |
+| Tests | `tests/test_race.py`, `tests/test_strategy_env.py` | On a synthetic oval, no download needed. |
+
+**Plugging in the real driver later.** Two hooks: (1) replace each track's
+`LapTable` with one measured from the trained driver (lap time at each grip level
+and fuel load); (2) set `attack_skill_s` / `defend_skill_s` (or refit
+`pass_delta_s` / `pass_slope_s`) from the driver's measured pass and defend rates.
+Then re-run the comparison; a strategy trained on the stand-in should be
+fine-tuned on the real driver's numbers.
+
+**Not built yet:** ERS, fuel-saving mode, safety car / VSC, weather, lapped
+traffic and blue flags, sending the push level to the driver's observation.

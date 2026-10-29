@@ -164,13 +164,17 @@ layer (+3.1% vs the ~1% goal), the 5 off-tracks when defending, the defend scena
 - [ ] Pick checkpoints by lap time over several seeds, not completion count (completion swings 0/3-3/3).
 - [ ] Longer or varied-length episodes so the agent sees whole laps.
 
-### Strategy Agent (needs an explicit go-ahead per CLAUDE.md)
-- [ ] Opponent cars.
-- [ ] Tyre, fuel and ERS models (cited constants only, no invented F1 numbers).
-- [ ] Race-control layer (pit lane, rules).
-- [ ] Lap-time lookup from the g-g simulator for tyre, fuel and mode settings, so strategy training is fast.
-- [ ] Non-RL baseline strategy (rule-based or dynamic programming).
-- [ ] MaskablePPO Strategy Agent, once per lap, sending a mode vector to the driver.
+### Strategy Agent (user go-ahead 2026-10-29 to build the code; real training waits for the driver)
+Details: `docs/strategy_agent_design.md`, "What is built".
+- [x] Rival cars with their own rule-based strategies (lap-by-lap race model).
+- [x] Tyre compounds, wear, push level and fuel (uncalibrated values marked as such); ERS not yet.
+- [x] Pit stops and the two-compound rule; safety car / weather not yet.
+- [x] Lap-time lookup from the g-g simulator for grip and fuel (`LapTable`), the stand-in driver.
+- [x] Rule-based baseline strategy (`FixedPlan`).
+- [x] PPO trainer (`configs/strategy_ppo.yaml`) and paired comparison CLI.
+- [ ] Calibrate compounds and pit loss from FastF1 stints (laptop).
+- [ ] Measure the trained driver's lap table and pass/defend rates; plug them in; full training.
+- [ ] Send the push level to the driver's observation.
 - [ ] Stage 3 (optional): joint fine-tuning.
 
 ### Overtake v4: fix the world first (2026-10-28, branch `claude/project-thread-j9b4o6`)

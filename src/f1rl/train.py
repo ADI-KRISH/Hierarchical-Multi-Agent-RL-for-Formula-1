@@ -1,10 +1,11 @@
 """Training entry point: ``uv run python -m f1rl.train --config <yaml>``.
 
 Reads one experiment YAML from ``configs/`` and trains the driver, logging into
-``runs/<run name>/``. A YAML with ``tactical: true`` is the race-craft driver
-(`TacticalEnv`, `f1rl.agents.tactical`); one with a ``sac:`` section is the
-racing-line driver (`RaceEnv`, `f1rl.agents.racer`); otherwise it is the v1
-centreline PPO driver (`DriverEnv`, `f1rl.agents.ppo`).
+``runs/<run name>/``. A YAML with ``strategy: true`` is the Strategy Agent
+(`StrategyEnv`, `f1rl.agents.strategy`); one with ``tactical: true`` is the
+race-craft driver (`TacticalEnv`, `f1rl.agents.tactical`); one with a ``sac:``
+section is the racing-line driver (`RaceEnv`, `f1rl.agents.racer`); otherwise it
+is the v1 centreline PPO driver (`DriverEnv`, `f1rl.agents.ppo`).
 """
 
 import argparse
@@ -36,6 +37,9 @@ def main() -> None:
     args = parser.parse_args()
 
     raw = yaml.safe_load(args.config.read_text(encoding="utf-8"))
+    if raw.get("strategy"):
+        _train_strategy(args)
+        return
     if raw.get("tactical"):
         _train_tactical(args)
         return
@@ -61,6 +65,25 @@ def main() -> None:
         f"{where}, seed {config.run.seed}"
     )
     train(config, tracks, run_dir)
+    print(f"Done. Logs and models in {run_dir}/")
+
+
+def _train_strategy(args: argparse.Namespace) -> None:
+    from f1rl.agents.strategy import load_strategy_config
+    from f1rl.agents.strategy import train as train_strategy
+
+    config = load_strategy_config(args.config)
+    if args.timesteps is not None:
+        config = replace(
+            config, run=replace(config.run, total_timesteps=args.timesteps)
+        )
+    run_dir = args.runs / config.run.name
+    if run_dir.exists():
+        if not args.overwrite:
+            raise SystemExit(f"{run_dir} exists -- pass --overwrite or rename the run.")
+        shutil.rmtree(run_dir)
+    print(f"Training strategy {config.run.name}: {config.run.total_timesteps:,} laps")
+    train_strategy(config, run_dir)
     print(f"Done. Logs and models in {run_dir}/")
 
 

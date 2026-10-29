@@ -248,9 +248,7 @@ def make_move(
     raise ValueError(f"unknown move {name!r}")
 
 
-def lane_move(
-    name: str, driver: PathDriver, s_m: float, shift_now: float
-) -> Maneuver:
+def lane_move(name: str, driver: PathDriver, s_m: float, shift_now: float) -> Maneuver:
     """A `LANE_MOVES` move: ease to the named offset from the racing line over
     `LANE_RAMP_M` and hold it (as far as the road beside the line allows over the
     next `LANE_LOOK_M`), braking late (`DIVE_BRAKE_FRACTION`) if ``_late``."""

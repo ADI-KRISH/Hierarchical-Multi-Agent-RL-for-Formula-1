@@ -413,6 +413,13 @@ class RaceEnvParams:
     # battle, and where the car ahead sits off the racing line now and how that
     # changed over the last second (how it is defending). False = earlier runs.
     plan_features: bool = False
+    # Scripted opponents plan their braking for this fraction of the brake limit
+    # (`FollowerParams.braking_fraction`), whatever their grip: a slower car then
+    # loses its time through the corners and out of them, not by braking early.
+    # 0 = the same as its grip (earlier runs: a 0.80 car braked ~25-30 m before
+    # us into fast corners, checked on Hockenheim 2026-10-29). Our own plan uses
+    # 0.95 (`FollowerParams.grip_fraction`).
+    opponent_braking_fraction: float = 0.0
     # The tactical "shield" that brakes the car behind whenever it is lined up within
     # 12 m + 1 s of closing (and the same rule in scripted opponents). With the
     # no-crash filter on it is not needed for safety, and it stops the classic pass:

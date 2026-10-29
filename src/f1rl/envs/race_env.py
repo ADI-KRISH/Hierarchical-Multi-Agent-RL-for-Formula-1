@@ -501,7 +501,9 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                     np.array(self._room_left),
                     np.array(self._room_right),
                     FollowerParams(
-                        grip_fraction=grip, saturated_brake=p.path_saturated_brake
+                        grip_fraction=grip,
+                        braking_fraction=p.opponent_braking_fraction or None,
+                        saturated_brake=p.path_saturated_brake,
                     ),
                     edge_inset_m=p.path_edge_inset_m,
                 )

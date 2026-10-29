@@ -284,3 +284,16 @@ def test_a_trained_defender_sees_the_plain_layout_and_drives_the_car_ahead() -> 
         env.step(env.moves.index("line"))
     assert seen and set(seen) == {base + len(MOVES) + 2}
     assert env._opp_move in ("cover", "line")  # its pick, or line if too late
+
+
+def test_slower_opponents_can_brake_as_late_as_we_do() -> None:
+    track = stadium_track()
+    line = optimal_line(track, EXAMPLE_CAR, MARGIN_M)
+    g = 9.80665 * EXAMPLE_CAR.max_braking_g
+    for frac, want in ((0.0, 0.80), (0.95, 0.95)):
+        params = dataclasses.replace(PARAMS, opponent_braking_fraction=frac)
+        env = TacticalEnv(EXAMPLE_CAR, track, SimParams(seed=0), params, line, "random")
+        env.reset(seed=0, options={"opponent": "slow", "gap_m": 30.0})
+        assert env._opp is not None
+        assert env._opp.driver._ax_brk == pytest.approx(want * g)
+        assert env._opp.driver._ay < 0.81 * 9.80665 * EXAMPLE_CAR.max_lateral_g

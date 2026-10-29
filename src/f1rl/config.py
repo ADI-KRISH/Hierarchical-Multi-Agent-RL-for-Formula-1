@@ -420,6 +420,12 @@ class RaceEnvParams:
     # us into fast corners, checked on Hockenheim 2026-10-29). Our own plan uses
     # 0.95 (`FollowerParams.grip_fraction`).
     opponent_braking_fraction: float = 0.0
+    # ...and plan their acceleration for this fraction of the throttle limit (0 =
+    # their grip, earlier runs: a 0.80 car was slow out of every corner and down
+    # the straight after it). With 0.95 and `slow_power_frac` 1.0 a slower car is
+    # slower only through the corners, and on a straight it is caught only in the
+    # tow -- as in F1, where the car behind needs the slipstream to pass.
+    opponent_accel_fraction: float = 0.0
     # The tactical "shield" that brakes the car behind whenever it is lined up within
     # 12 m + 1 s of closing (and the same rule in scripted opponents). With the
     # no-crash filter on it is not needed for safety, and it stops the classic pass:
@@ -587,6 +593,9 @@ class FollowerParams:
     # same as `grip_fraction`): braking earlier costs little time, and it is where
     # steering and braking compete for the same grip.
     braking_fraction: float | None = None
+    # ...and acceleration out of corners for this fraction of the throttle limit if
+    # set (None = the same as `grip_fraction`).
+    accel_fraction: float | None = None
     # The speed controller aims to close the gap to the target speed in this long.
     speed_time_constant_s: float = 0.25
     # A path driver whose steering is maxed out while it is too fast still keeps

@@ -297,3 +297,18 @@ def test_slower_opponents_can_brake_as_late_as_we_do() -> None:
         assert env._opp is not None
         assert env._opp.driver._ax_brk == pytest.approx(want * g)
         assert env._opp.driver._ay < 0.81 * 9.80665 * EXAMPLE_CAR.max_lateral_g
+
+
+def test_slower_opponents_can_accelerate_out_of_corners_as_we_do() -> None:
+    track = stadium_track()
+    line = optimal_line(track, EXAMPLE_CAR, MARGIN_M)
+    speeds = []
+    for frac in (0.0, 0.95):
+        params = dataclasses.replace(PARAMS, opponent_accel_fraction=frac)
+        env = TacticalEnv(EXAMPLE_CAR, track, SimParams(seed=0), params, line, "random")
+        env.reset(seed=0, options={"opponent": "slow", "gap_m": 30.0})
+        assert env._opp is not None
+        speeds.append(env._opp.driver.line_speed().copy())
+    # Same corner speeds; quicker (or as quick) everywhere out of them.
+    assert speeds[1].min() == pytest.approx(speeds[0].min(), rel=1e-3)
+    assert (speeds[1] >= speeds[0] - 1e-6).all() and speeds[1].mean() > speeds[0].mean()

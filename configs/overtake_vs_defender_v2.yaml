@@ -3,7 +3,11 @@
 # brakes long before the corner, so passes are easy"). Before, a 0.80 car planned
 # its braking for 80% of the brake limit and braked ~25-30 m early into fast
 # corners; now it brakes at our rate and starts earlier only where its slower
-# corner speed needs it. Harder: not comparable with the earlier results.
+# corner speed needs it. The user also noted the straight-line edge: slower cars
+# now have full power (slow_power_frac 0.97 -> 1.0) and plan their acceleration
+# out of corners at our rate (opponent_accel_fraction 0.95), so they are slower
+# ONLY through the corners and a straight is won only in the tow.
+# Harder: not comparable with the earlier results.
 # Starts from overtake_vs_defender's best.
 tactical: true
 
@@ -68,6 +72,7 @@ env:
   tow_drag_cut: 0.12
   plan_features: true
   opponent_braking_fraction: 0.95
+  opponent_accel_fraction: 0.95
   side_own_fault: true   # a squeeze by the other car is not our dirty move
   path_edge_inset_m: 0.6
   track_limit_margin_m: 0.5
@@ -75,7 +80,7 @@ env:
   lane_moves: true
   safety_lift_first: true
   path_saturated_brake: 0.6
-  slow_power_frac: 0.97
+  slow_power_frac: 1.0   # was 0.97: slower cars are no longer down on power
   pull_moves: true
   section_win_bonus: 30.0
   section_fail_penalty: 30.0

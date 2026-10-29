@@ -503,6 +503,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                     FollowerParams(
                         grip_fraction=grip,
                         braking_fraction=p.opponent_braking_fraction or None,
+                        accel_fraction=p.opponent_accel_fraction or None,
                         saturated_brake=p.path_saturated_brake,
                     ),
                     edge_inset_m=p.path_edge_inset_m,

@@ -66,16 +66,19 @@ class TacticalEnv(RaceEnv):
         unknown = set(params.tactical_moves) - set(MOVES)
         if unknown:
             raise ValueError(f"unknown tactical_moves: {sorted(unknown)}")
-        self.moves: tuple[str, ...] = params.tactical_moves or (
+        # The observation shows the running move out of every move on offer, so a
+        # policy with fewer moves (`tactical_moves`) keeps the main driver's layout.
+        self._obs_moves: tuple[str, ...] = (
             MOVES
             + (PULL_MOVES if params.pull_moves else ())
             + (LANE_MOVES if params.lane_moves else ())
         )
+        self.moves: tuple[str, ...] = params.tactical_moves or self._obs_moves
         self.action_space = gym.spaces.Discrete(len(self.moves))
         n = self.observation_space.shape[0]  # type: ignore[index]
         plan = PLAN_FEATURES if params.plan_features else 0
         self.observation_space = gym.spaces.Box(
-            -5.0, 5.0, (n + len(self.moves) + 2 + plan,), np.float32
+            -5.0, 5.0, (n + len(self._obs_moves) + 2 + plan,), np.float32
         )
         # Both cars' offsets from the racing line at the last decisions, oldest
         # first (`plan_features`: how the car ahead has been moving).
@@ -155,8 +158,8 @@ class TacticalEnv(RaceEnv):
         corners = corners_ahead(d, self._state.s_m, 900.0 if plan else LOOKAHEAD_M)
         brake = min(corners[0].brake_m, 300.0) / 300.0 if corners else 1.0
         side = corners[0].side if corners else 0.0
-        hot = np.zeros(len(self.moves), dtype=np.float32)
-        hot[self.moves.index(self._move)] = 1.0
+        hot = np.zeros(len(self._obs_moves), dtype=np.float32)
+        hot[self._obs_moves.index(self._move)] = 1.0
         parts = [self._observation(), hot, np.array([brake, side], dtype=np.float32)]
         if plan:
             parts.append(self._plan_obs(corners))

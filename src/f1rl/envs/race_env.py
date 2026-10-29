@@ -378,6 +378,9 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         self._opp_last = (0.0, 0.0)
         self._start_s = 0.0
         opts = options or {}
+        section = opts.get("section_m")
+        self._section_m = None if section is None else float(section)
+        self._section_done = self._section_won = False
         self._push, self._wear = 1.0, 0.0
         if p.tires:
             random_start = self.mode == "random"
@@ -397,9 +400,6 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             )
         self._opp, self._passes, self._contact = None, 0, False
         self._swaps, self._since_m = 0, 0.0
-        section = opts.get("section_m")
-        self._section_m = None if section is None else float(section)
-        self._section_done = self._section_won = False
         self._interventions = self._opp_interventions = 0
         self._grip = self._plan_grip = (
             tire_grip(self.tire, self._wear) if p.tires else 1.0
@@ -478,6 +478,13 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             self._ahead = self._held = where == "behind"
             if p.safety_filter:
                 self._opp.state = self._recoverable(self._opp.state, sign * gap)
+            if self._section_m is not None and sign > 0:
+                # A section battle starts mid-corner too: no faster than the car
+                # ahead plus what we could still brake off within the gap.
+                room = max(0.0, gap - p.car_length_m - p.safety_margin_s_m)
+                slack = math.sqrt(room * self.car.max_braking_g * GRAVITY_M_S2)
+                v = min(self._state.speed_ms, self._opp.state.speed_ms + slack)
+                self._state = replace(self._state, speed_ms=v)
         self._update_grip()
         info = self._info(off_track=False, lap_completed=False)
         return self._observation(), info

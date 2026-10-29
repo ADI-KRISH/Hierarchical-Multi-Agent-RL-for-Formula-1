@@ -29,10 +29,10 @@ run:
   real_eval_per_track: 20
   section_frac: 1.0
   section_opponents: [slow, slow, guard_slow, guard_slow, backmarker]
-  section_gap_m: [6.0, 20.0]
+  section_gap_m: [6.5, 16.0]
   section_priority: true
   section_eval_opponents: [slow, guard_slow]
-  section_eval_gap_m: 12.0
+  section_eval_gap_m: 9.0
   rival_frac: 0.0   # self-play needs in-process envs; this run uses 12 processes
   pool_every_steps: 150000
   pool_size: 8
@@ -103,6 +103,6 @@ sections:
   approach_m: 200.0
   past_apex_m: 30.0
   turn_in_frac: 0.5
-  corner_exit_m: 150.0
+  corner_exit_m: 300.0
   straight_from_apex_m: 10.0
   min_length_m: 80.0

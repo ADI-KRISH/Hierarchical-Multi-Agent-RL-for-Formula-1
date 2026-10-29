@@ -27,7 +27,7 @@ def main() -> None:
     ap.add_argument("--policy", default="tactician")
     ap.add_argument("--tracks", default="validation")
     ap.add_argument("--opponents", default="slow,guard_slow")
-    ap.add_argument("--gap", type=float, default=12.0)
+    ap.add_argument("--gap", type=float, default=9.0)
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()
     config = load_tactical_config(args.config)

@@ -100,10 +100,6 @@ def track_sections(
         prev_apex = corners[i - 1][1] * ds_m
         if prev_apex >= apex:
             prev_apex -= lap
-        prev_exit = prev_apex + p.corner_exit_m
-        if len(corners) == 1:
-            prev_exit = apex - lap + p.corner_exit_m
-
         def add(kind: str, start: float, end: float) -> None:
             if end - start >= p.min_length_m:
                 out.append(
@@ -123,11 +119,11 @@ def track_sections(
         # to the braking point (the pass must be done by then).
         add("straight", prev_apex + p.straight_from_apex_m, brake)
         # Braking zone: the approach to the braking point to just past the apex.
-        approach = max(brake - p.approach_m, prev_exit, prev_apex + 1.0)
+        approach = max(brake - p.approach_m, prev_apex + p.straight_from_apex_m)
         add("braking", approach, apex + p.past_apex_m)
         # Corner: turn-in (a little before the braking point ends) to the exit.
         turn_in = max(brake + p.turn_in_frac * (apex - brake), approach)
-        add("corner", turn_in, min(apex + p.corner_exit_m, top))
+        add("corner", turn_in, min(apex + p.corner_exit_m, max(top, apex + 60.0)))
     return out
 
 

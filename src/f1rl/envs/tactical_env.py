@@ -140,8 +140,13 @@ class TacticalEnv(RaceEnv):
         )
         if abs(opp_n - planned) >= abs(dn) - 0.05:
             return  # the plan does not close on it
-        here = me.n_m - d.base.line_state(me.s_m)[0]
-        self._maneuver = Maneuver(me.s_m, ((0.0, here), (CHOP_LOOK_M, here)))
+        # Hold the spot on the ROAD (not the offset from a line that may sweep
+        # across toward the other car): knots every 10 m at that same position.
+        knots = tuple(
+            (dd, me.n_m - d.base.line_state(me.s_m + dd)[0])
+            for dd in np.arange(0.0, CHOP_LOOK_M + 1.0, 10.0)
+        )
+        self._maneuver = Maneuver(me.s_m, knots)
         self.chop_holds += 1
 
     def _may_change(self, corners: list[Any]) -> bool:

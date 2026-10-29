@@ -258,15 +258,23 @@ def test_with_the_filter_even_a_reckless_driver_never_hits_anyone() -> None:
 
 
 def test_lift_first_lifts_before_braking_hard() -> None:
-    me = FrenetState(100.0, 0.0, 0.0, 60.0)
-    ahead = FrenetState(109.0, 0.0, 0.0, 60.0)  # 9 m ahead, same speed
+    me = FrenetState(100.0, 0.0, 0.0, 75.0)
+    ahead = FrenetState(110.0, 0.0, 0.0, 60.0)  # 10 m ahead, 15 m/s slower
     lift = dataclasses.replace(CHECK, lift_first=True)
-    first = candidates((1.0, 0.0), me, ahead, lift)[:2]
-    assert first == [(0.0, 0.0), (-0.3, 0.0)]
-    assert candidates((1.0, 0.0), me, ahead, CHECK)[0][0] <= -0.8  # earlier runs
-    # Flat out into a car 9 m ahead at the same speed: lifting is enough.
-    cmd, hit = safe_command(
-        EXAMPLE_CAR, me, (1.0, 0.0), EXAMPLE_CAR, ahead, (0.0, 0.0),
-        _straight, _wide, lift,
-    )
-    assert hit and cmd[0] >= -0.3
+    assert candidates((1.0, 0.0), me, ahead, lift)[:2] == [(0.0, 0.0), (-0.3, 0.0)]
+
+    def run(check: SafetyCheck) -> tuple[tuple[float, float], bool]:
+        return safe_command(
+            EXAMPLE_CAR,
+            me,
+            (1.0, 0.0),
+            EXAMPLE_CAR,
+            ahead,
+            (0.0, 0.0),
+            _straight,
+            _wide,
+            check,
+        )
+
+    assert run(CHECK) == ((-0.8, 0.0), True)  # earlier runs: a hard brake
+    assert run(lift) == ((-0.3, 0.0), True)  # a light brake is enough

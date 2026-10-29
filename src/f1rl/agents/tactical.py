@@ -315,6 +315,7 @@ def section_battle(
         "rescues": int(info["rescues"]),
         "my_rescues": int(info["my_rescues"]),
         "dirty_steps": int(info["dirty_steps"]),
+        **{k: int(info[k]) for k in ("dirty_side", "dirty_chop", "dirty_follow")},
         "elapsed_s": float(info["elapsed_s"]),
     }
 

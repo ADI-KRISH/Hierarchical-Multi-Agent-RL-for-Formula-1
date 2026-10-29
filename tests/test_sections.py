@@ -139,13 +139,13 @@ def test_too_close_rules() -> None:
     env.reset(seed=0, options={"opponent": "slow", "gap_m": 20.0})
     me = FrenetState(100.0, 0.0, 0.0, 50.0)
 
-    def at(ds: float, dn: float) -> bool:
+    def at(ds: float, dn: float) -> str:
         return env._too_close(FrenetState(100.0 + ds, dn, 0.0, 50.0), me)
 
     assert not at(0.0, 3.0)  # side by side with 1 m of air
-    assert at(0.0, 2.3)  # side by side, 0.3 m of air
+    assert at(0.0, 2.3) == "side"  # side by side, 0.3 m of air
     assert not at(6.5, 0.0)  # following 1 m off its gearbox
-    assert at(5.8, 0.0)  # 0.3 m off it
-    assert at(-7.0, 0.0)  # cut in 1.5 m in front of its nose: a chop
+    assert at(5.8, 0.0) == "follow"  # 0.3 m off it
+    assert at(-7.0, 0.0) == "chop"  # cut in 1.5 m in front of its nose
     assert not at(-9.0, 0.0)  # 3.5 m clear: fine
     assert not at(-7.0, 3.0)  # ahead but not in its lane

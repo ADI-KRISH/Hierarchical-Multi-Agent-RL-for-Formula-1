@@ -146,6 +146,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         self._rescues = 0  # filter steps (either car) while wheel to wheel
         self._my_rescues = 0  # ...of them, on our car
         self._dirty_steps = 0  # physics steps closer than clean racing allows
+        self._dirty = {"side": 0, "chop": 0, "follow": 0}  # ...by which rule
         self._safety = SafetyCheck(
             lap_m=self._lap_m,
             car_length_m=p.car_length_m,
@@ -405,6 +406,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         self._swaps, self._since_m = 0, 0.0
         self._interventions = self._opp_interventions = self._rescues = 0
         self._my_rescues = self._dirty_steps = 0
+        self._dirty = {"side": 0, "chop": 0, "follow": 0}
         self._grip = self._plan_grip = (
             tire_grip(self.tire, self._wear) if p.tires else 1.0
         )
@@ -590,8 +592,10 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                     total -= p.fail_penalty
                     terminated = True
                     break
-                if self._too_close(opp.state, now):
+                why = self._too_close(opp.state, now)
+                if why:
                     self._dirty_steps += 1
+                    self._dirty[why] += 1
                     total -= p.dirty_penalty
             total += (now.s_m - before.s_m) / p.progress_scale_m
             limit = p.track_limit_margin_m
@@ -671,20 +675,23 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         info["advanced_m"] = self._state.s_m - start_s
         return self._observation(), total, terminated, truncated, info
 
-    def _too_close(self, opp: FrenetState, me: FrenetState) -> bool:
+    def _too_close(self, opp: FrenetState, me: FrenetState) -> str:
         """Closer than clean racing allows (`RaceEnvParams.clean_side_m` etc.):
         side by side with less air than ``clean_side_m`` between the cars, ahead in
         its lane less than ``clean_chop_m`` in front of its nose (a chop), or behind
-        in its lane less than ``clean_follow_m`` off its gearbox."""
+        in its lane less than ``clean_follow_m`` off its gearbox. Returns which
+        ("side", "chop", "follow") or "" if clean."""
         p = self.params
         gap = wrap_gap(opp.s_m - me.s_m, self._lap_m)  # > 0: it is ahead
         side_air = abs(opp.n_m - me.n_m) - p.car_width_m
         nose_air = abs(gap) - p.car_length_m
         if nose_air < 0.0:
-            return side_air < p.clean_side_m
+            return "side" if side_air < p.clean_side_m else ""
         if side_air >= p.clean_side_m:
-            return False
-        return nose_air < (p.clean_follow_m if gap > 0 else p.clean_chop_m)
+            return ""
+        if gap > 0:
+            return "follow" if nose_air < p.clean_follow_m else ""
+        return "chop" if nose_air < p.clean_chop_m else ""
 
     def _opponent_features(self, opp: Opponent) -> NDArray[np.float32]:
         """See `RaceEnvParams.opponent_features`."""
@@ -720,6 +727,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             "rescues": self._rescues,
             "my_rescues": self._my_rescues,
             "dirty_steps": self._dirty_steps,
+            **{f"dirty_{k}": v for k, v in self._dirty.items()},
             "elapsed_s": self._steps * self.sim.dt_s,
             "off_track": off_track,
             "lap_completed": lap_completed,

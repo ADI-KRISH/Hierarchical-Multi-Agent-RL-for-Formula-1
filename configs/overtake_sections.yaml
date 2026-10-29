@@ -3,7 +3,7 @@
 # Every straight, braking zone and corner of the 17 training tracks is its own short
 # battle (`f1rl.sections`): start 6-20 m behind a slower car at the section's start;
 # won only if ahead by the section's end and the pass then sticks (pass_hold_m).
-# Sections lost most often are drawn most often (section_priority). Opponents: a
+# Sections won only some of the time are drawn most often (section_priority). Opponents: a
 # slow car, lapped traffic, and the defending sparring driver at the slow pace
 # (guard_slow, `f1rl.agents.guard`). Phase 2 (overtake_combined.yaml) starts from
 # this model and mixes sections with whole battles.

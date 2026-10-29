@@ -99,8 +99,8 @@ class TacticalRun:
     # Section battles (`f1rl.sections`): this share of training episodes is one
     # straight, braking zone or corner of a training track, started ``section_gap_m``
     # behind one of ``section_opponents`` (a slower car); the pass must be done by
-    # the section's end. With ``section_priority`` the sections this env loses most
-    # are drawn more often (win rate tracked per section). Evaluations also run every
+    # the section's end. With ``section_priority`` the sections this env wins only
+    # some of the time are drawn more often (win rate tracked per section). Evaluations also run every
     # validation-track section against each of ``section_eval_opponents``.
     section_frac: float = 0.0
     section_opponents: list[str] = field(default_factory=lambda: ["slow"])
@@ -267,8 +267,10 @@ class MultiTrackTactical(gym.Env[Any, Any]):
     def _pick_section(self, secs: list[Section], run: "TacticalRun") -> Section:
         if not run.section_priority:
             return secs[int(self.np_random.integers(len(secs)))]
-        # Sections lost more often are drawn more often; every one keeps a chance.
-        w = np.array([1.05 - self.section_wins.get(x.name, 0.5) for x in secs])
+        # Sections sometimes won and sometimes lost are drawn most (most left to
+        # learn there); ones always won or never won yet keep a smaller chance.
+        rate = np.array([self.section_wins.get(x.name, 0.5) for x in secs])
+        w = rate * (1.0 - rate) + 0.1
         return secs[int(self.np_random.choice(len(secs), p=w / w.sum()))]
 
     def step(self, action: Any) -> tuple[Any, float, bool, bool, dict[str, Any]]:

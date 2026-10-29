@@ -417,6 +417,10 @@ class RaceEnvParams:
     # the car's centre has. 0.2 = earlier runs; close racing pushes the car onto that
     # path's edge, and a small tracking overshoot then ended the battle.
     path_edge_inset_m: float = 0.2
+    # `FollowerParams.saturated_brake` for every path driver (ours and the
+    # opponents'): braking kept when steering is maxed out and the car is too fast.
+    # 0 = earlier runs.
+    path_saturated_brake: float = 0.0
     # Track limits: the car's centre may go this far (m) past the line where its side
     # touches the edge before it counts as off the track. 0 = earlier runs (any
     # touch of the edge). A design choice: 1.0 would be the centre on the edge line.
@@ -530,6 +534,12 @@ class FollowerParams:
     braking_fraction: float | None = None
     # The speed controller aims to close the gap to the target speed in this long.
     speed_time_constant_s: float = 0.25
+    # A path driver whose steering is maxed out while it is too fast still keeps
+    # up to this much of the brake (a share of full braking, giving up that much
+    # steering on the friction ellipse). 0 = steering always wins and the car
+    # cannot slow down: pushed off its line it slides off the road at constant
+    # speed. Slowing shrinks the turn it needs (radius ~ v^2), so it makes the turn.
+    saturated_brake: float = 0.0
 
 
 @dataclass(frozen=True)

@@ -278,3 +278,48 @@ def test_lift_first_lifts_before_braking_hard() -> None:
 
     assert run(CHECK) == ((-0.8, 0.0), True)  # earlier runs: a hard brake
     assert run(lift) == ((-0.3, 0.0), True)  # a light brake is enough
+
+
+def test_with_nothing_clear_a_car_takes_the_most_room_even_off_the_road() -> None:
+    # Side by side, the other car squeezing in: no command keeps clear, and the
+    # ones that keep furthest apart leave the road. A crash is worse than running
+    # wide, so the filter takes the most room, not the command.
+    check = dataclasses.replace(CHECK, hold_s=0.5)
+    me = FrenetState(100.0, -0.9, 0.0, 50.0)
+    other = FrenetState(101.0, 1.0, -0.1, 50.0)  # alongside, turning onto us
+
+    def narrow(_s: float) -> tuple[float, float]:
+        return 1.5, 1.5
+
+    def judge(cmd: tuple[float, float]) -> tuple[float, float]:
+        return rollout(
+            EXAMPLE_CAR,
+            me,
+            map_action(EXAMPLE_CAR, *cmd),
+            EXAMPLE_CAR,
+            other,
+            map_action(EXAMPLE_CAR, 0.0, -1.0),
+            _straight,
+            narrow,
+            check,
+        )
+
+    command = (0.0, 0.0)
+    clear = min(0.0, separation(me, other, check))
+    tries = candidates(command, me, other, check)
+    tries += fallbacks(EXAMPLE_CAR, me, command, other, 0.0, check)
+    on_road = [judge(c)[0] for c in tries if judge(c)[1] > min(0.0, judge(command)[1])]
+    assert judge(command)[0] < clear and all(sep < clear for sep in on_road)
+    cmd, hit = safe_command(
+        EXAMPLE_CAR,
+        me,
+        command,
+        EXAMPLE_CAR,
+        other,
+        map_action(EXAMPLE_CAR, 0.0, -1.0),
+        _straight,
+        narrow,
+        check,
+    )
+    assert hit
+    assert judge(cmd)[0] > max([judge(command)[0], *on_road])

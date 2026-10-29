@@ -18,10 +18,11 @@ intrusive one that keeps them apart and on the track:
 The fallback the check assumes (keep the lane, brake if behind) is always a
 candidate too, so a command judged safe now leaves a safe command next time.
 If no candidate is clear, the one that leaves the most room to the other car is
-used. A replacement never takes a car off the road (leaving the track is not a way
-out). The car behind is filtered first, and the car ahead is then checked against
-what the car behind will really do. A command that keeps clear is never touched,
-so clean racing is left alone. Pure functions, no I/O, no globals.
+used. A replacement takes a car off the road only to avoid a crash: when that is
+the only way to keep clear, or, if nothing keeps clear, when off the road leaves
+more room to the other car than any command on it. The car behind is filtered
+first, and the car ahead is then checked against what the car behind will really
+do. A command that keeps clear is never touched, so clean racing is left alone. Pure functions, no I/O, no globals.
 """
 
 import math
@@ -289,11 +290,15 @@ def safe_command(
     best, least = command, clear - worst
     escape: Command | None = None  # clear, but only by leaving the road
     escape_room = -math.inf
+    rescue: Command | None = None  # not clear and off the road, but furthest apart
+    rescue_sep = -math.inf
     for cmd in tries:
         sep, room = judge(cmd)
         if room <= road:
             if sep > clear and room > escape_room:
                 escape, escape_room = cmd, room
+            if sep > rescue_sep:
+                rescue, rescue_sep = cmd, sep
             continue
         if sep > clear:
             return cmd, True
@@ -302,4 +307,8 @@ def safe_command(
     # Nothing on the road keeps clear: run off the road rather than into the car.
     if escape is not None:
         return escape, True
+    # Nothing keeps clear at all: the most room to the other car, even if that is
+    # off the road -- running wide is better than running into it.
+    if rescue is not None and clear - rescue_sep < least:
+        return rescue, True
     return best, best != command

@@ -189,7 +189,9 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         key = round(frac * self._plan_grip, 2)
         assert self.reference is not None  # residual_scale > 0 checked at init
         if key not in self._followers:
-            fp = FollowerParams(grip_fraction=key)
+            fp = FollowerParams(
+                grip_fraction=key, saturated_brake=p.path_saturated_brake
+            )
             if p.tactical:
                 self._followers[key] = PathDriver(
                     self.car,
@@ -461,7 +463,9 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                     self.reference,
                     np.array(self._room_left),
                     np.array(self._room_right),
-                    FollowerParams(grip_fraction=grip),
+                    FollowerParams(
+                        grip_fraction=grip, saturated_brake=p.path_saturated_brake
+                    ),
                     edge_inset_m=p.path_edge_inset_m,
                 )
                 self._opp_drivers[kind] = driver

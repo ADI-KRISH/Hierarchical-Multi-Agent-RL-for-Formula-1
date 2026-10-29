@@ -164,6 +164,10 @@ class PathDriver:
         a_want = a_ref + (v_here - v) / p.speed_time_constant_s
         peak = self.car.max_accel_g if a_want >= 0 else self.car.max_braking_g
         u_long = a_want / (peak * GRAVITY_M_S2)
+        keep = min(max(0.0, -u_long), p.saturated_brake)
+        if keep > 0.0:  # too fast with the steering maxed: give a little up to brake
+            cap = math.sqrt(1.0 - keep * keep)
+            u_lat = float(np.clip(u_lat, -cap, cap))
         room = math.sqrt(max(0.0, 1.0 - u_lat * u_lat))
         u_long = float(np.clip(u_long, -room, room))
         return np.array([u_long, u_lat], dtype=np.float32)

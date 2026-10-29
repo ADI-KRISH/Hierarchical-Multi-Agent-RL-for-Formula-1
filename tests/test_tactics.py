@@ -108,3 +108,40 @@ def test_the_overtake_assist_is_for_the_car_behind_on_a_straight() -> None:
     boost = env._tow(behind, ahead)
     assert boost == (PARAMS.tow_boost_ms if straight else 0.0)
     assert env._tow(ahead, behind) == 0.0  # the leader gets none
+
+
+def test_a_path_driver_with_its_steering_maxed_out_can_still_brake() -> None:
+    from f1rl.config import FollowerParams
+    from f1rl.models.maneuver import hold as hold_shift
+
+    env = _env()
+    env.reset(seed=0)
+    base = env._driver()
+    assert isinstance(base, PathDriver)
+    # Pushed 3 m off its path, pointing away from it, and well over its speed.
+    s = 400.0
+    _, pn, _, _, pv = base.plan(s, hold_shift(0.0))
+    info = {
+        "distance_m": s,
+        "lateral_offset_m": float(pn[0]) + 3.0,
+        "heading_rad": 0.2,
+        "speed_ms": float(pv[0]) + 20.0,
+    }
+
+    def act(keep: float) -> np.ndarray:
+        d = PathDriver(
+            base.car,
+            base.track,
+            base.line,
+            base.room_l + 0.2,
+            base.room_r + 0.2,
+            FollowerParams(
+                grip_fraction=base.params.grip_fraction, saturated_brake=keep
+            ),
+        )
+        return d.act(info, hold_shift(0.0))
+
+    old, new = act(0.0), act(0.6)
+    assert abs(old[1]) == pytest.approx(1.0) and old[0] == pytest.approx(0.0)
+    assert new[0] == pytest.approx(-0.6, abs=1e-6)  # brakes...
+    assert abs(new[1]) == pytest.approx(0.8, abs=1e-6)  # ...giving up some steering

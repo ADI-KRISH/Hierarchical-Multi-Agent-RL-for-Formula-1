@@ -56,7 +56,7 @@ class LineFollower:
         derated = replace(
             car,
             max_lateral_g=car.max_lateral_g * f,
-            max_accel_g=car.max_accel_g * f,
+            max_accel_g=car.max_accel_g * (self.params.accel_fraction or f),
             max_braking_g=car.max_braking_g * (self.params.braking_fraction or f),
         )
         # From the unsmoothed curvature, the same the steering follows: at a sharp

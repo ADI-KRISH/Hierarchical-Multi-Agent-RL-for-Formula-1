@@ -144,6 +144,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         self._swaps = 0  # every change of order, stuck or not
         self._section_m: float | None = None  # a section battle's length
         self._section_done = self._section_won = False
+        self._defending = False  # the battle started with the other car behind
         self._contact = False
         self._grip = 1.0
         self._plan_grip = 1.0
@@ -404,6 +405,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         section = opts.get("section_m")
         self._section_m = None if section is None else float(section)
         self._section_done = self._section_won = False
+        self._defending = False  # the battle started with the other car behind
         self._push, self._wear = 1.0, 0.0
         if p.tires:
             random_start = self.mode == "random"
@@ -501,7 +503,10 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                     np.array(self._room_left),
                     np.array(self._room_right),
                     FollowerParams(
-                        grip_fraction=grip, saturated_brake=p.path_saturated_brake
+                        grip_fraction=grip,
+                        braking_fraction=p.opponent_braking_fraction or None,
+                        accel_fraction=p.opponent_accel_fraction or None,
+                        saturated_brake=p.path_saturated_brake,
                     ),
                     edge_inset_m=p.path_edge_inset_m,
                 )
@@ -509,6 +514,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             side = float(self.np_random.choice([-1.0, 1.0]))
             self._opp = place(kind, driver, self._state.s_m + sign * gap, side, p.guard)
             self._ahead = self._held = where == "behind"
+            self._defending = where == "behind"
             if p.safety_filter:
                 self._opp.state = self._recoverable(self._opp.state, sign * gap)
             if self._section_m is not None and sign > 0:
@@ -619,9 +625,18 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                 # while the gap across is really shrinking (both cars following a
                 # line that sweeps across the road is not a chop).
                 shrink = abs(opp_before.n_m - before.n_m) - abs(opp.state.n_m - now.n_m)
-                mine = (now.n_m - before.n_m) * (
-                    1.0 if opp.state.n_m > now.n_m else -1.0
-                )
+                toward = 1.0 if opp.state.n_m > now.n_m else -1.0
+                mine = (now.n_m - before.n_m) * toward
+                ahead_m = wrap_gap(now.s_m - opp.state.s_m, self._lap_m)
+                if p.chop_line_relative and self._defending and ahead_m > 0:
+                    # Defending: a chop is a step further off our own racing line
+                    # toward the car behind. Driving the line (the attacker put
+                    # its nose there) or moving back to it is not; alongside, the
+                    # "side" rule still asks for room.
+                    off_now = now.n_m - self._line_n(now.s_m)
+                    off_before = before.n_m - self._line_n(before.s_m)
+                    step = (off_now - off_before) * toward
+                    mine = min(mine, step if abs(off_now) > abs(off_before) else 0.0)
                 lat = min(shrink, mine) / dt
                 why = self._too_close(opp.state, now, lat)
                 if why:
@@ -701,10 +716,17 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             tail = self._section_m + p.pass_hold_m + p.section_tail_m
             if self._section_done and (self._passes >= 1 or progress >= tail):
                 section_over = True
+            if self._passes <= -1:  # a defence lost: passed, and it stuck
+                section_over = True
         truncated = not terminated and (self._steps >= budget or section_over)
         info.update(self._info(off_track=off_track, lap_completed=lap_completed))
         info["advanced_m"] = self._state.s_m - start_s
         return self._observation(), total, terminated, truncated, info
+
+    def _line_n(self, s_m: float) -> float:
+        """The racing line's offset (m, left +) at ``s_m``; 0 = the centreline
+        (`TacticalEnv` gives its path driver's line)."""
+        return 0.0
 
     def _too_close(
         self, opp: FrenetState, me: FrenetState, my_lat_ms: float = 0.0
@@ -720,6 +742,8 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         side_air = abs(opp.n_m - me.n_m) - p.car_width_m
         nose_air = abs(gap) - p.car_length_m
         if nose_air < 0.0:
+            if p.side_own_fault and my_lat_ms <= 0.0:
+                return ""  # not closing in: if anyone squeezed, it was the other car
             return "side" if side_air < p.clean_side_m else ""
         if side_air >= p.clean_side_m:
             return ""
@@ -769,6 +793,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             "lap_completed": lap_completed,
             "section_done": self._section_done,
             "section_won": self._section_won,
+            "defending": self._defending,
         }
 
     def _observation(self) -> ObsType:

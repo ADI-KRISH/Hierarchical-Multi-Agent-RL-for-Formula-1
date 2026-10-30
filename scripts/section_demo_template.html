@@ -91,6 +91,7 @@ input[type="range"] { flex: 1 1 160px; accent-color: var(--me); min-width: 0; }
   <div class="main">
     <aside class="side">
       <div class="filters" id="filters" role="group" aria-label="Show"></div>
+      <div class="filters" id="modes" role="group" aria-label="Battle type" hidden></div>
       <label class="legend" for="track">Track
         <select id="track"></select>
       </label>
@@ -109,7 +110,7 @@ input[type="range"] { flex: 1 1 160px; accent-color: var(--me); min-width: 0; }
         <label class="legend" for="speed">Speed
           <select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
         </label>
-        <div class="legend"><span><i style="background:var(--me)"></i>Our driver</span><span><i style="background:var(--opp)"></i>Slower car</span><span><i style="background:var(--muted)"></i>Section end</span></div>
+        <div class="legend"><span><i style="background:var(--me)"></i>Our driver</span><span><i style="background:var(--opp)"></i>Other car</span><span><i style="background:var(--muted)"></i>Section end</span></div>
       </div>
     </section>
   </div>
@@ -121,29 +122,47 @@ const DATA = /*DATA*/null;
 const $ = (id) => document.getElementById(id);
 const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const KIND = { straight: "Straight", braking: "Braking zone", corner_in: "Corner, inside", corner_out: "Corner, outside" };
-const OPP = { slow: "slow car", guard_slow: "slow defender", backmarker: "backmarker" };
-const WHYCOL = { "clean pass": "--good", "still behind": "--muted", "too close": "--warn", "off track": "--bad", "contact": "--bad", "pass did not stick": "--warn" };
-let filter = "won", trackSel = "all", cur = null, t = 0, playing = false, last = 0;
+const OPP = { slow: "slow car", guard_slow: "slow defender", rival_ahead_slow: "trained defender", backmarker: "backmarker", rival_tactician: "rule-based attacker", rival_tactician_fast: "fast rule-based attacker", attacker: "aggressive attacker", rival_behind: "our own overtaking driver" };
+const WHYCOL = { "clean pass": "--good", "still behind": "--muted", "too close": "--warn", "off track": "--bad", "contact": "--bad", "pass did not stick": "--warn", held: "--good", passed: "--muted" };
+let filter = "won", modeSel = "all", trackSel = "all", cur = null, t = 0, playing = false, last = 0;
 
 function init() {
   if (!DATA) { $("sub").textContent = "No battles embedded."; return; }
   $("title").textContent = DATA.title;
   const B = DATA.battles, won = B.filter(b => b.won).length;
   const tracks = Object.keys(DATA.tracks);
-  $("sub").textContent = `Each straight, braking zone and corner of ${tracks.length} track${tracks.length > 1 ? "s" : ""} (${tracks.join(", ")}) as its own battle: start 9 m behind a slower car, finish ahead by the section's end, and keep the place. Strict rules: no contact, never off the track, at least 0.5 m of air side by side, no cutting across within 3 m of the other car's nose.`;
+  const DEF = B.length > 0 && B.every(b => b.defend);
+  const MIX = !DEF && B.some(b => b.defend);
+  const WIN = DEF ? "held" : "clean passes";
+  if (DEF) $("sub").textContent = `Each straight and braking zone of ${tracks.length} track${tracks.length > 1 ? "s" : ""} (${tracks.join(", ")}) as its own defence: start 9 m ahead of a faster attacker on worn tyres, still be ahead at the section's end with no pass stuck. Strict rules: no contact, never off the track, at least 0.5 m of air side by side, no chop across the attacker's nose, one move only.`;
+  else if (MIX) $("sub").textContent = `Each section of ${tracks.length} unseen track${tracks.length > 1 ? "s" : ""} (${tracks.join(", ")}) as its own battle, with one driver doing both jobs. Overtaking: start 9 m behind a slower car, finish ahead and keep the place. Defending (straights and braking zones): start 9 m ahead of a faster attacker on worn tyres, still be ahead at the end. Strict rules for both: no contact, never off the track, at least 0.5 m of air side by side, no cutting across the other car's nose.`;
+  else $("sub").textContent = `Each straight, braking zone and corner of ${tracks.length} track${tracks.length > 1 ? "s" : ""} (${tracks.join(", ")}) as its own battle: start 9 m behind a slower car, finish ahead by the section's end, and keep the place. Strict rules: no contact, never off the track, at least 0.5 m of air side by side, no cutting across within 3 m of the other car's nose.`;
   const strip = $("strip");
   const stat = (v, l) => { const d = document.createElement("div"); d.className = "stat"; d.innerHTML = `<b>${v}</b><span>${l}</span>`; strip.append(d); };
-  stat(`${won}/${B.length}`, "clean passes");
-  for (const k of Object.keys(KIND)) {
+  if (MIX) {
+    const A = B.filter(b => !b.defend), D = B.filter(b => b.defend);
+    stat(`${A.filter(b => b.won).length}/${A.length}`, "clean passes");
+    stat(`${D.filter(b => b.won).length}/${D.length}`, "defences held");
+  } else stat(`${won}/${B.length}`, WIN);
+  if (!MIX) for (const k of Object.keys(KIND)) {
     const s = B.filter(b => b.kind === k); if (s.length) stat(`${s.filter(b => b.won).length}/${s.length}`, KIND[k]);
   }
   stat(B.filter(b => b.why === "contact").length, "contacts");
   const f = $("filters");
-  for (const [k, l] of [["won", "Clean passes"], ["all", "All battles"], ["lost", "Not won"]]) {
+  for (const [k, l] of [["won", DEF ? "Held" : MIX ? "Won" : "Clean passes"], ["all", "All battles"], ["lost", DEF ? "Passed" : MIX ? "Lost" : "Not won"]]) {
     const c = document.createElement("button"); c.className = "chip"; c.type = "button"; c.textContent = l;
     c.setAttribute("aria-pressed", String(k === filter)); c.dataset.k = k;
     c.onclick = () => { filter = k; for (const x of f.children) x.setAttribute("aria-pressed", String(x.dataset.k === k)); list(); };
     f.append(c);
+  }
+  if (MIX) {
+    const m = $("modes"); m.hidden = false;
+    for (const [k, l] of [["all", "Both"], ["attack", "Overtaking"], ["defend", "Defending"]]) {
+      const c = document.createElement("button"); c.className = "chip"; c.type = "button"; c.textContent = l;
+      c.setAttribute("aria-pressed", String(k === modeSel)); c.dataset.k = k;
+      c.onclick = () => { modeSel = k; for (const x of m.children) x.setAttribute("aria-pressed", String(x.dataset.k === k)); list(); };
+      m.append(c);
+    }
   }
   const ts = $("track"); ts.innerHTML = `<option value="all">All tracks</option>` + tracks.map(n => `<option>${n}</option>`).join("");
   ts.onchange = () => { trackSel = ts.value; list(); };
@@ -157,7 +176,7 @@ function init() {
 }
 
 function visible() {
-  return DATA.battles.filter(b => (trackSel === "all" || b.track === trackSel) && (filter === "all" || (filter === "won") === b.won));
+  return DATA.battles.filter(b => (trackSel === "all" || b.track === trackSel) && (modeSel === "all" || (modeSel === "defend") === !!b.defend) && (filter === "all" || (filter === "won") === b.won));
 }
 
 function list() {
@@ -167,7 +186,7 @@ function list() {
   for (const b of v) {
     const r = document.createElement("button"); r.type = "button"; r.className = "row"; r.setAttribute("role", "listitem");
     const col = `var(${WHYCOL[b.why] || "--muted"})`;
-    r.innerHTML = `<span class="dot" style="background:${col}"></span><span><span class="t">${b.name.replace(/\//g, " · ")}</span><br><span class="m">${KIND[b.kind]} vs ${OPP[b.opponent] || b.opponent}</span></span><span class="why" style="color:${col}">${b.why}</span>`;
+    r.innerHTML = `<span class="dot" style="background:${col}"></span><span><span class="t">${b.name.replace(/\//g, " · ")}</span><br><span class="m">${b.defend ? "Defending " + KIND[b.kind].toLowerCase() + " from" : KIND[b.kind] + " vs"} ${OPP[b.opponent] || b.opponent}</span></span><span class="why" style="color:${col}">${b.why}</span>`;
     r.onclick = () => select(b, r);
     L.append(r);
   }
@@ -185,7 +204,8 @@ function select(b, row) {
 
 function tick(now) {
   if (playing && cur) {
-    t += (now - last) / 1000 / DATA.dt * +$("speed").value;
+    // rAF time can lag performance.now() (set on select): never step backwards.
+    t = Math.max(0, t + Math.max(0, now - last) / 1000 / DATA.dt * +$("speed").value);
     if (t >= cur.frames.length - 1) { t = cur.frames.length - 1; playing = false; $("play").textContent = "Play"; }
     draw();
   }
@@ -194,7 +214,8 @@ function tick(now) {
 }
 
 function lerpFrame(fr, x) {
-  const i = Math.min(Math.floor(x), fr.length - 1), j = Math.min(i + 1, fr.length - 1), u = x - i;
+  x = Math.max(0, Math.min(x || 0, fr.length - 1));
+  const i = Math.floor(x), j = Math.min(i + 1, fr.length - 1), u = x - i;
   const a = fr[i], b = fr[j];
   const ang = (p, q) => p + Math.atan2(Math.sin(q - p), Math.cos(q - p)) * u;
   return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, ang(a[2], b[2]), a[3] + (b[3] - a[3]) * u,

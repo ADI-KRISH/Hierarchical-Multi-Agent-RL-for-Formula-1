@@ -413,6 +413,19 @@ class RaceEnvParams:
     # battle, and where the car ahead sits off the racing line now and how that
     # changed over the last second (how it is defending). False = earlier runs.
     plan_features: bool = False
+    # Scripted opponents plan their braking for this fraction of the brake limit
+    # (`FollowerParams.braking_fraction`), whatever their grip: a slower car then
+    # loses its time through the corners and out of them, not by braking early.
+    # 0 = the same as its grip (earlier runs: a 0.80 car braked ~25-30 m before
+    # us into fast corners, checked on Hockenheim 2026-10-29). Our own plan uses
+    # 0.95 (`FollowerParams.grip_fraction`).
+    opponent_braking_fraction: float = 0.0
+    # ...and plan their acceleration for this fraction of the throttle limit (0 =
+    # their grip, earlier runs: a 0.80 car was slow out of every corner and down
+    # the straight after it). With 0.95 and `slow_power_frac` 1.0 a slower car is
+    # slower only through the corners, and on a straight it is caught only in the
+    # tow -- as in F1, where the car behind needs the slipstream to pass.
+    opponent_accel_fraction: float = 0.0
     # The tactical "shield" that brakes the car behind whenever it is lined up within
     # 12 m + 1 s of closing (and the same rule in scripted opponents). With the
     # no-crash filter on it is not needed for safety, and it stops the classic pass:
@@ -432,6 +445,19 @@ class RaceEnvParams:
     # and never finished one, and a low-entropy one never tried another.
     commit_moves: bool = False
     commit_max_decisions: int = 24
+    # Tactical env: the moves the agent may pick (its action space, in this order).
+    # Empty = all of `agents.tactics.MOVES`. A defender uses ("line", "cover",
+    # "inside"). The observation still shows the running move out of all MOVES.
+    tactical_moves: tuple[str, ...] = ()
+    # Defending rules for the agent's own moves (as `GuardParams`): no new cover or
+    # inside once the car behind is within a car length + `guard.min_move_gap_m`
+    # (moving across its nose that late forces it to swerve). False = earlier runs.
+    defend_rules: bool = False
+    # With another car behind us, only the defending moves (`line`, `cover`,
+    # `inside`): any other pick becomes `line` and counts as refused. Stops a
+    # defender from weaving with moves made for attacking (a lane move re-aims at the
+    # other car every decision: mirroring it is blocking). False = earlier runs.
+    defend_moves_only: bool = False
     # Extra opponent features: its sideways speed, a pass waiting to stick (+1 when
     # we lead and it has not stuck yet, -1 when we were passed and it has not stuck,
     # scaled by how far into `pass_hold_m` it is), whether it is in our tow (a
@@ -509,6 +535,20 @@ class RaceEnvParams:
     clean_chop_m: float = 3.0
     clean_follow_m: float = 0.5
     dirty_penalty: float = 0.0
+    # Side by side, the "side" rule blames our car only while it is the one closing
+    # in (its own sideways step toward the other car, and the gap across shrinking).
+    # A car that squeezes us onto our own line is its fault, not a dirty move of
+    # ours. Checked 2026-10-29: of 43 "dirty" two-corner battles of the scripted
+    # driver, 20 ended ahead and 21 had "side" steps. False = earlier runs.
+    side_own_fault: bool = False
+    # In a defence (the other car started behind), the "chop" rule counts only our
+    # sideways steps further off our own racing line toward the car behind (a move
+    # across its nose); driving the line's own sweep across the road, or moving
+    # back to the line, is not. Alongside, the "side" rule still asks for room.
+    # Attack battles keep the old rule (no cutting back in front after a pass).
+    # Checked 2026-10-30: a defender that only drove the racing line was "dirty"
+    # in 130 of 240 validation defend battles. False = earlier runs.
+    chop_line_relative: bool = False
     # Tactical env: after a pass (or alongside), hold the current offset rather than
     # move back across into the other car's lane before clear of its nose by
     # `clean_chop_m` plus a car length (`TacticalEnv._no_chop`). False = earlier runs.
@@ -566,6 +606,9 @@ class FollowerParams:
     # same as `grip_fraction`): braking earlier costs little time, and it is where
     # steering and braking compete for the same grip.
     braking_fraction: float | None = None
+    # ...and acceleration out of corners for this fraction of the throttle limit if
+    # set (None = the same as `grip_fraction`).
+    accel_fraction: float | None = None
     # The speed controller aims to close the gap to the target speed in this long.
     speed_time_constant_s: float = 0.25
     # A path driver whose steering is maxed out while it is too fast still keeps
@@ -619,6 +662,13 @@ OPPONENT_KINDS: Final = {
     # moves picked by a copy of a learned policy (`TacticalEnv.rival`).
     "rival_ahead": (0.95, "ahead"),
     "rival_behind": (0.95, "behind"),
+    # A learned defender as the car ahead at the "slow" car's pace (its policy is set
+    # as `TacticalEnv.rival`, see `f1rl.agents.defender_rl.load_defender`).
+    "rival_ahead_slow": (0.80, "ahead"),
+    # Attackers for training a defender: the rule-based race-craft driver
+    # (`agents.tactician`) picks this car's moves from its own view of the race.
+    "rival_tactician": (0.95, "behind"),
+    "rival_tactician_fast": (0.97, "behind"),
 }
 
 

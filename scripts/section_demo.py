@@ -19,7 +19,14 @@ from typing import Any
 import numpy as np
 import yaml
 
-from f1rl.agents.tactical import load_tactical_config, section_won
+from f1rl.agents.tactical import (
+    defend_options,
+    load_tactical_config,
+    section_won,
+    use_attacker,
+    use_defender,
+)
+from f1rl.config import OPPONENT_KINDS
 from f1rl.envs.race_env import RaceEnv
 from f1rl.envs.racetrack import TUM_HELD_OUT, TUM_TRAIN, TUM_VALIDATION, RaceTrack
 from f1rl.scenarios import make_env, pick
@@ -57,7 +64,9 @@ def outline(track: RaceTrack, step: int = 2) -> dict[str, list[float]]:
     return out
 
 
-def battle(env: Any, policy: Any, sec: Any, opp: str, gap: float) -> dict[str, Any]:
+def battle(
+    env: Any, policy: Any, sec: Any, opp: str, gap: float, wear: float = 0.0
+) -> dict[str, Any]:
     """One section battle, recorded every env step (`action_repeat` physics steps)."""
     frames: list[list[float]] = []
     track = env.track
@@ -93,7 +102,12 @@ def battle(env: Any, policy: Any, sec: Any, opp: str, gap: float) -> dict[str, A
             snap(current[0])
         return out
 
-    obs, info = env.reset(seed=0, options=section_options(sec, opp, gap))
+    behind = OPPONENT_KINDS[opp][1] == "behind"
+    if behind:
+        opts = defend_options(sec, opp, gap, wear)
+    else:
+        opts = section_options(sec, opp, gap)
+    obs, info = env.reset(seed=0, options=opts)
     snap("line")
     RaceEnv.step = step  # type: ignore[method-assign]
     try:
@@ -113,6 +127,8 @@ def battle(env: Any, policy: Any, sec: Any, opp: str, gap: float) -> dict[str, A
         why = "off track"
     elif info["dirty_steps"]:
         why = "too close"
+    elif behind:
+        why = "held" if section_won(info) else "passed"
     elif section_won(info):
         why = "clean pass"
     elif info["section_won"]:
@@ -124,6 +140,7 @@ def battle(env: Any, policy: Any, sec: Any, opp: str, gap: float) -> dict[str, A
         "name": sec.name,
         "kind": sec.kind,
         "opponent": opp,
+        "defend": behind,
         "won": section_won(info),
         "why": why,
         "end": [round(ex, 1), round(ey, 1)],
@@ -138,6 +155,13 @@ def main() -> None:
     ap.add_argument("--tracks", default="held_out")
     ap.add_argument("--opponents", default="slow,guard_slow")
     ap.add_argument("--gap", type=float, default=9.0)
+    ap.add_argument(
+        "--defender", default="", help="trained defender model for rival_ahead* cars"
+    )
+    ap.add_argument(
+        "--attacker", default="", help="main-driver model for rival_behind cars"
+    )
+    ap.add_argument("--wear", type=float, default=0.0, help="our wear, defending")
     ap.add_argument("--title", default="Corner-by-corner overtaking")
     ap.add_argument("--out", type=Path, default=Path("runs/section_demo.html"))
     ap.add_argument("--set", nargs="*", default=[], help="env overrides, k=v")
@@ -157,11 +181,18 @@ def main() -> None:
     moves: list[str] = []
     for name in names:
         env = make_env(name, params, "random")
+        if args.defender:
+            use_defender([env], args.defender, ("line", "cover", "inside"))
+        if args.attacker:
+            use_attacker([env], args.attacker)
         moves = list(env.moves)
         tracks[name] = outline(env.track)
         for sec in env_sections(env, config.section_params()):
             for opp in args.opponents.split(","):
-                battles.append(battle(env, policy, sec, opp, args.gap))
+                behind = OPPONENT_KINDS[opp][1] == "behind"
+                if behind and sec.kind not in config.run.section_defend_kinds:
+                    continue
+                battles.append(battle(env, policy, sec, opp, args.gap, args.wear))
         done = [b for b in battles if b["track"] == name]
         print(f"{name:14} {sum(b['won'] for b in done)}/{len(done)}", flush=True)
     data = {

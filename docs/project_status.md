@@ -1,4 +1,4 @@
-# Project status: done and to do (updated 2026-10-26)
+# Project status: done and to do (updated 2026-10-30)
 
 Driver Agent for the F1 RL project (repo `ADI-KRISH/Hierarchical-Multi-Agent-RL-for-Formula-1`).
 Run-by-run training numbers are in `docs/training_log.md`; the phase notes are in `PROGRESS.md`.
@@ -164,7 +164,7 @@ layer (+3.1% vs the ~1% goal), the 5 off-tracks when defending, the defend scena
 - [ ] Pick checkpoints by lap time over several seeds, not completion count (completion swings 0/3-3/3).
 - [ ] Longer or varied-length episodes so the agent sees whole laps.
 
-### Strategy Agent (user go-ahead 2026-10-29 to build the code; real training waits for the driver)
+### Strategy Agent (user go-ahead 2026-10-29 to build the code; 2026-10-30 to build it on our driver)
 Details: `docs/strategy_agent_design.md`, "What is built".
 - [x] Rival cars with their own rule-based strategies (lap-by-lap race model).
 - [x] Tyre compounds, wear, push level and fuel (uncalibrated values marked as such); ERS not yet.
@@ -172,10 +172,9 @@ Details: `docs/strategy_agent_design.md`, "What is built".
 - [x] Lap-time lookup from the g-g simulator for grip and fuel (`LapTable`), the stand-in driver.
 - [x] Rule-based baseline strategy (`FixedPlan`).
 - [x] PPO trainer (`configs/strategy_ppo.yaml`) and paired comparison CLI.
+- [ ] Measure our driver's lap table and pass/defend rates; plug them in; full training.
 - [ ] Calibrate compounds and pit loss from FastF1 stints (laptop).
-- [ ] Measure the trained driver's lap table and pass/defend rates; plug them in; full training.
 - [ ] Send the push level to the driver's observation.
-- [ ] Stage 3 (optional): joint fine-tuning.
 
 ### Overtake v4: fix the world first (2026-10-28, branch `claude/project-thread-j9b4o6`)
 Review: the scripted tactician passed 0/36 validation battles (pass must hold 1 km), so RL had
@@ -283,3 +282,100 @@ validation, so the ceiling within one section is low in this sim: a single
 straight or corner is often too short to complete a clean pass on a car only
 slightly slower. Next: score passes over two or three sections (phase 2,
 combined battles).
+
+### Two-corner battles, air drag, longer view, trained defender (2026-10-29)
+
+Same strict clean rules; each battle now runs on to the exit of the NEXT corner
+(`sections.span_corners: 2`). Added, all opt-in (earlier configs unchanged):
+
+- **Air drag** (`aero_drag`): drag from `max_accel_g` and `max_speed_ms` (full
+  throttle just holds top speed); the tow cuts it 12% (`tow_drag_cut`). Physics
+  change for configs that use it.
+- **Longer view** (`plan_features`): the corner after next, metres left in the
+  battle, the car ahead's offset from the line and how it moved in the last second.
+  Saved policies load into the bigger observation (`tactical.load_grown`).
+- **Fairer side-by-side scoring** (`side_own_fault`): a squeeze by the other car
+  is no longer our dirty move.
+- **The trained defender** from the defender thread (`agents.defender_rl`, run 1
+  best) drives the `rival_ahead_slow` car (`run.defender_model`, scripts take
+  `--defender`).
+
+What each step did (validation, scripted driver, slow + guard_slow, 180 battles):
+two corners 17 (one corner 13-15); plus drag 23 (off-tracks 18 -> 9). Diagnosis of
+lost battles: mostly "still behind", stuck ~6.5 m back (car length + the filter's
+1 m) and rarely pulling out; dirty air is the largest single cost (without it 36).
+
+Training: overtake_multi and overtake_drag did not improve on their starting model;
+overtake_vs_defender (ent_coef 0.01) peaked at 100k decisions (45/270 validation vs
+37 at the start) and was stopped at 400k.
+
+Held-out (5 unseen tracks, 525 battles, 0 contacts for both):
+
+| car ahead | model | scripted |
+|---|---|---|
+| slow | 10/175 | 13/175 |
+| guard_slow (scripted defender) | 32/175 | 37/175 |
+| trained defender | 14/175 | 15/175 |
+| total | 56/525 | 65/525 |
+
+Against slow + guard_slow the model went from 30/350 (one corner, no drag) to
+42/350. The scripted driver is still a little ahead; PPO has stalled at about its
+level. Demo: https://claude.ai/artifact/1nc7cSww9HWwToDrQsB5DA
+
+### Slower cars slower only in corners (2026-10-29, user report)
+
+The user saw the car ahead braking long before corners and slower on straights,
+which made passes easy. Measured on Hockenheim: a 0.80 car braked ~25-30 m before
+us into fast corners (it planned braking for 80% of the brake limit) and planned
+its acceleration for 80% too, with 3% less power. New options (defaults unchanged):
+`opponent_braking_fraction`, `opponent_accel_fraction` (both 0.95 = our plan) and
+`slow_power_frac` 1.0 in `configs/overtake_vs_defender_v2.yaml`: a slower car now
+loses time only through the corners; on a straight it is caught only in the tow.
+Also fixed: the demo's replay crashed when the browser clock lagged (negative time).
+
+Validation (270 battles): scripted 17, model at start 20; training flat (best 22 at
+100k), stopped at 300k. Held-out (525 battles, 0 contacts both):
+
+| car ahead | model | scripted |
+|---|---|---|
+| slow | 6/175 | 8/175 |
+| guard_slow | 26/175 | 30/175 |
+| trained defender | 5/175 | 13/175 |
+| total | 37/525 | 51/525 |
+
+### Main driver learns to defend (2026-10-30, branch `claude/project-thread-0kerne`)
+
+User request: teach the main (overtaking) driver to defend, on its own branch.
+Section battles now include defences: our car at the start of a straight or
+braking zone, an attacker 6.5-16 m behind, our tyres worn. Attackers are a mix of
+rule-based cars (`rival_tactician`, `rival_tactician_fast`, `attacker`) and a
+frozen copy of our own overtaking driver (`rival_behind` driven by
+`attacker_model`). Held = still ahead at the section's end, no pass stuck, clean.
+New options: `defend_moves_only` (with a car behind only line / cover / inside),
+`chop_line_relative` (a chop is a step further off our racing line toward the
+attacker; returning to the line is fine). Run 1 (`configs/defend_sections.yaml`)
+was flat. Run 2 (`configs/defend_sections_v2.yaml`: wear up to 0.7, behaviour
+cloning of the scripted defence for 40k decisions, 30% defences, lr 1e-4) is the
+result; `runs/defend_sections_v2/model_best.zip` (500k decisions).
+
+Oracle check (validation, wear 0.6): the best single cover/inside at the best
+moment saves only 16 of 106 lost defences, so the ceiling with these moves is
+about 150/240 vs 134 for just holding the line. Defending moves matter little in
+this sim; better moves (hold the inside through the corner, defensive late
+braking) are the next lever.
+
+Held-out (5 unseen tracks, gap 9 m, wear 0.6, 460 defences = 115 sections x 4
+attackers; attack vs `slow` + `guard_slow`, 350 battles):
+
+| driver | defences held | contacts | off track | too close | attack |
+|---|---|---|---|---|---|
+| never defend (line) | 264 | 0 | 0 | 104 | - |
+| scripted defender | 257 | 0 | 1 | 111 | - |
+| starting model | 254 | 2 | 0 | 98 | 29 |
+| **defend run 2** | **273** | 2 | 2 | **88** | **49** |
+
+Both contacts are the same rule-based attacker running into us at Silverstone T14,
+for the starting model too. Attack improved (29 to 49 of 350), so defending did
+not cost overtaking. Lap pace was not re-measured (the pace planner is unchanged).
+Scripts: `scripts/section_gate.py --attacker --wear`, `scripts/defend_oracle.py`,
+`scripts/section_demo.py --attacker --wear` (defend replays).

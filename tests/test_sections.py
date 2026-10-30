@@ -1,5 +1,6 @@
 """Track sections (`f1rl.sections`) and section battles in `RaceEnv`."""
 
+import dataclasses
 from pathlib import Path
 
 import numpy as np
@@ -167,6 +168,11 @@ def test_too_close_rules() -> None:
     assert not at(-7.0, 0.5)  # holding our line: it tucked in behind us
     assert not at(-9.0, 0.5, 2.0)  # 3.5 m clear: fine
     assert not at(-7.0, 3.0)  # ahead but not in its lane
+    # side_own_fault: side by side counts against us only while we close in.
+    env.params = dataclasses.replace(env.params, side_own_fault=True)
+    assert at(0.0, 2.3, 0.5) == "side"  # we moved toward it
+    assert not at(0.0, 2.3)  # we held our line: it squeezed us
+    assert not at(0.0, 2.3, -0.5)  # we were moving away
 
 
 def test_span_corners_runs_each_battle_to_a_later_corner_exit() -> None:

@@ -50,6 +50,7 @@ from f1rl.config import (
     SectionParams,
     SimParams,
 )
+from f1rl.envs.opponents import wrap_gap
 from f1rl.envs.tactical_env import TacticalEnv
 from f1rl.real_starts import ROLES, RealStart, by_track, load_real_starts
 from f1rl.scenarios import SCENARIOS, pick, run_one, run_real
@@ -142,6 +143,13 @@ class TacticalRun:
     )
     section_defend_wear: list[float] = field(default_factory=lambda: [0.0, 0.0])
     section_eval_attackers: list[str] = field(default_factory=list)
+    # Our tyre wear in those evaluation defences (0 = new tyres).
+    section_eval_wear: float = 0.0
+    # With ``init_model``: first teach DEFENDING by imitation, keeping the rest.
+    # Over this many decisions of the training mix, the label is the rule-based
+    # tactician's defending move whenever a car is behind us, and the starting
+    # model's own choice otherwise (so attacking is distilled, not lost).
+    bc_defend_decisions: int = 0
     # A frozen main-driver model (.zip) driving every ``rival_behind`` car: the
     # driver defends against its own attacking. "" = none (no ``rival_behind``).
     attacker_model: str = ""
@@ -453,6 +461,59 @@ def clone_tactician(
     return float((pred == y).float().mean())
 
 
+DEFEND_MOVES = ("line", "cover", "inside")
+
+
+def defence_label(env: TacticalEnv, own: int) -> int:
+    """The label for one decision when cloning a defence: the rule-based
+    tactician's defending move with a car behind us, else ``own`` (the starting
+    model's choice)."""
+    opp = env._opp
+    if opp is None or wrap_gap(opp.state.s_m - env._state.s_m, env._lap_m) >= 0:
+        return own
+    move = choose(env)
+    return env.moves.index(move if move in DEFEND_MOVES else "line")
+
+
+def clone_defence(
+    model: PPO, multi: MultiTrackTactical, decisions: int, epochs: int, seed: int
+) -> float:
+    """Teach ``model`` the tactician's defending moves while keeping its own
+    choices elsewhere (`TacticalRun.bc_defend_decisions`). The episodes are played
+    by the labels. Returns the share of decisions the model then agrees with."""
+    teacher = copy.deepcopy(model.policy)
+    teacher.set_training_mode(False)
+    rng = np.random.default_rng(seed)
+    obs_list: list[Any] = []
+    act_list: list[int] = []
+    while len(obs_list) < decisions:
+        obs, _ = multi.reset(seed=int(rng.integers(2**31 - 1)))
+        env = multi.envs[multi._current]
+        done = False
+        while not done and len(obs_list) < decisions:
+            own = int(teacher.predict(obs, deterministic=True)[0])
+            move = defence_label(env, own)
+            obs_list.append(obs)
+            act_list.append(move)
+            obs, _, terminated, truncated, _ = multi.step(move)
+            done = terminated or truncated
+    x = torch.as_tensor(np.array(obs_list), dtype=torch.float32)
+    y = torch.as_tensor(act_list, dtype=torch.long)
+    opt = torch.optim.Adam(model.policy.parameters(), lr=3e-4)
+    for _ in range(epochs):
+        order = torch.randperm(len(x))
+        for i in range(0, len(x), 512):
+            idx = order[i : i + 512]
+            _, log_prob, _ = model.policy.evaluate_actions(x[idx], y[idx])
+            loss = -log_prob.mean()
+            opt.zero_grad()
+            loss.backward()  # type: ignore[no-untyped-call]
+            opt.step()
+    with torch.no_grad():
+        pred = model.policy.get_distribution(x).get_actions(deterministic=True)
+    return float((pred == y).float().mean())
+
+
 class PoolCallback(BaseCallback):
     """Adds a frozen copy of the policy to the self-play pool every so often."""
 
@@ -484,8 +545,10 @@ class ScenarioCallback(BaseCallback):
         section_gap_m: float = 12.0,
         section_attackers: list[str] | None = None,
         defend_kinds: list[str] | None = None,
+        defend_wear: float = 0.0,
     ) -> None:
         super().__init__()
+        self.defend_wear = defend_wear
         self.sections = sections or {}
         self.section_attackers = section_attackers or []
         self.defend_kinds = defend_kinds or []
@@ -552,7 +615,9 @@ class ScenarioCallback(BaseCallback):
         sec_rows += [
             (
                 f"def_{sec.kind}",
-                section_battle(self.real_envs[name], self.model, sec, o, g),
+                section_battle(
+                    self.real_envs[name], self.model, sec, o, g, self.defend_wear
+                ),
             )
             for name, secs in self.sections.items()
             for sec in secs
@@ -799,6 +864,15 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
         print(f"Starting from {run.init_model}", flush=True)
         if grown:
             print(f"  new inputs start at zero weight: {', '.join(grown)}", flush=True)
+        if run.bc_defend_decisions:
+            agree = clone_defence(
+                model,
+                make_multi(20_000)(),
+                run.bc_defend_decisions,
+                run.bc_epochs,
+                run.seed,
+            )
+            print(f"Defence cloning: agrees with its labels on {agree:.1%}", flush=True)
     elif run.bc_decisions:
         agree = clone_tactician(
             model,
@@ -822,6 +896,7 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
         run.section_eval_gap_m,
         run.section_eval_attackers,
         run.section_defend_kinds,
+        run.section_eval_wear,
     )
     callbacks: list[BaseCallback] = [callback]
     if run.rival_frac > 0:

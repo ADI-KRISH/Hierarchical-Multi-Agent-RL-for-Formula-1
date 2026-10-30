@@ -123,3 +123,16 @@ def test_driving_the_racing_line_ahead_is_never_a_chop() -> None:
         for kind in ("rival_tactician", "attacker"):
             r = section_battle(env, "line", sec, kind, 6.5)
             assert r["dirty_chop"] == 0, (sec.name, kind)
+
+
+def test_defence_labels_keep_own_choice_when_nobody_is_behind() -> None:
+    from f1rl.agents.tactical import DEFEND_MOVES, defence_label
+
+    env = _env()
+    sec = next(s for s in env_sections(env) if s.kind == "straight")
+    env.reset(seed=0, options=defend_options(sec, "rival_tactician", 15.0))
+    assert env.moves[defence_label(env, 3)] in DEFEND_MOVES
+    env.reset(
+        seed=0, options={"start_s": sec.start_s, "opponent": "slow", "gap_m": 15.0}
+    )
+    assert defence_label(env, 3) == 3

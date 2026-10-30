@@ -71,3 +71,19 @@ def test_measured_curves_drive_our_battles() -> None:
     assert resolve_lap(p, *args, ours=0, our_defend=keen)[0] == [1, 0]
     stout = PassCurve(5.0, 0.2)
     assert resolve_lap(p, *args, ours=0, our_defend=stout)[0] == [0, 1]
+
+
+def test_smooth_pace_fits_a_line() -> None:
+    from f1rl.driver_profile import smooth_pace
+
+    prof = DriverProfile(
+        model="m",
+        pace={"T": ((0.84, 0.88, 0.92, 0.95), (0.08, 0.10, 0.07, 0.09))},
+        attack=PRIOR,
+        defend=PRIOR,
+    )
+    s = smooth_pace(prof)
+    grips, gaps = s.pace["T"]
+    assert grips == (0.84, 0.95)
+    assert np.mean(gaps) == pytest.approx(0.085, abs=0.005)
+    assert s.gap("T", 0.9) is not None

@@ -17,7 +17,7 @@ the fit (pure functions).
 
 import json
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -130,3 +130,21 @@ def fit_pass_curve(
     # Odds must not swing from 0 to 1 within a hundredth of a second.
     slope = max(0.01, math.exp(float(log_slope)))
     return PassCurve(float(delta), slope, len(advantage_s))
+
+
+def smooth_pace(profile: DriverProfile) -> DriverProfile:
+    """The profile with each track's pace gap replaced by a straight-line fit over
+    grip (least squares), kept at the measured range's two ends. Single laps scatter
+    by about a percent, enough to make a lower push level look quicker on some
+    tracks; a line keeps less grip = slower without inventing a shape."""
+    pace = {}
+    for track, (grips, gaps) in profile.pace.items():
+        g = np.asarray(grips, dtype=np.float64)
+        if len(g) < 2 or np.ptp(g) == 0:
+            pace[track] = (grips, gaps)
+            continue
+        slope, icept = np.polyfit(g, np.asarray(gaps, dtype=np.float64), 1)
+        ends = (float(g.min()), float(g.max()))
+        pace[track] = (ends, tuple(float(icept + slope * x) for x in ends))
+    meta = {**profile.meta, "pace": "straight-line fit of the measured laps"}
+    return replace(profile, pace=pace, meta=meta)

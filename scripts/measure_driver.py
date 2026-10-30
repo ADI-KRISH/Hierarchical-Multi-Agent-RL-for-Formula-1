@@ -193,6 +193,7 @@ def main() -> None:
         PassCurve,
         fit_pass_curve,
         save_profile,
+        smooth_pace,
     )
     from f1rl.envs.racetrack import TUM_HELD_OUT, TUM_TRACKS, TUM_TRAIN, TUM_VALIDATION
 
@@ -212,6 +213,12 @@ def main() -> None:
     )
     ap.add_argument("--procs", type=int, default=8)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument(
+        "--from-raw",
+        type=Path,
+        default=None,
+        help="refit from an earlier run's *_raw.json instead of driving",
+    )
     args = ap.parse_args()
     args.attack_opponents = [k for k in args.attack_opponents.split(",") if k]
     args.defend_opponents = [k for k in args.defend_opponents.split(",") if k]
@@ -225,9 +232,13 @@ def main() -> None:
     }
     names = sets.get(args.tracks, tuple(args.tracks.split(",")))
     jobs = [(args, n) for n in names]
-    results = []
-    with mp.get_context("spawn").Pool(min(args.procs, len(jobs))) as pool:
-        for r in pool.imap_unordered(measure_track, jobs):
+    results: list[dict[str, Any]] = []
+    if args.from_raw:
+        done = json.loads(args.from_raw.read_text(encoding="utf-8"))
+        jobs = []
+    with mp.get_context("spawn").Pool(max(1, min(args.procs, len(jobs)))) as pool:
+        stream = done if args.from_raw else pool.imap_unordered(measure_track, jobs)
+        for r in stream:
             results.append(r)
             if "error" in r:
                 print(f"{r['track']:14} FAILED {r['error']}", flush=True)
@@ -273,9 +284,13 @@ def main() -> None:
             "failed_tracks": [r["track"] for r in results if "error" in r],
         },
     )
+    raw_pace = profile.pace
+    profile = smooth_pace(profile)
+    profile.meta["pace_measured"] = {t: list(map(list, v)) for t, v in raw_pace.items()}
     save_profile(profile, args.out)
     raw = args.out.with_name(args.out.stem + "_raw.json")
-    raw.write_text(json.dumps(results, indent=2), encoding="utf-8")
+    if not args.from_raw:
+        raw.write_text(json.dumps(results, indent=2), encoding="utf-8")
     print(
         f"\nmean pace gap {profile.mean_gap():+.2%} over {len(good)} tracks\n"
         f"attack: 50% pass at {curves['attack'].delta_s:+.2f} s/lap advantage "

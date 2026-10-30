@@ -831,6 +831,40 @@ needs ~5 s/lap more pace to pass, track position is worth more than fresh tyres,
 so extra stops never paid. No overcuts were counted for any strategy: the race
 model has no cold-tyre out-lap, so staying out rarely wins a place.
 
+**Racing to win against baseline drivers (2026-10-30, `configs/strategy_win.yaml`).**
+User ask: win every race, against rivals that all run the rule-based plan, with tyre
+delta, pit window, tyre life and laps remaining as inputs. Changes:
+
+- 38 inputs: lap-time delta of fresh soft/medium/hard vs our current tyres, our tyres
+  vs the cars just ahead and behind, tyre life left vs laps to go, the pit window per
+  compound (can it reach the flag), compounds used so far.
+- `rivals: baseline`: all 9 rivals run the rule-based M->H plan, each stop moved by
+  up to +/-5% of the race (`rival_stop_jitter`), equal cars (`car_pace_spread: 0`).
+- Reward: `finish_weight 1.0`, `win_bonus 20` paid at the flag for a legal win;
+  checkpoint chosen by wins (`select_by: wins`).
+
+2M laps on the laptop (~20 min). Best checkpoint (1.65M laps) won 67% of 30
+validation races; the rule-based plan wins 3% in the same field. Held-out, 40 paired
+races, 10 cars, our measured driver:
+
+| | wins | podiums | place | undercuts / race | undercut on us |
+|---|---|---|---|---|---|
+| rule-based M->H at 45% | 10% | 33% | 5.47 | 0.53 | 0.38 |
+| random | 0% | 0% | 10.0 (95% legal) | | |
+| **strategy agent** | **72%** | **95%** | **1.52** | 0.50 | 0.00 |
+
+Better than the rule-based plan in 36 of 40 races, same in 4, never worse (+3.95
+places a race). What it learned: always medium -> hard, one stop at 36-42% of the
+race (earlier than every rival), normal push on 75% of laps, a little conserve, a
+little attack at the end. It drops to the back on the stop lap, then takes the lead
+back as the rivals stop later on older tyres: a race-long undercut on the whole field.
+
+Why not 100%, and what this depends on: (1) rivals follow a fixed plan and never
+cover an early stop, real teams would; (2) the race model has no cold-tyre out-lap,
+which makes an early stop cheaper than it is; (3) with equal cars and a driver that
+needs ~5 s/lap more pace to pass, a race lost at the start or in traffic cannot be
+won back on track. Compounds and pit loss are still uncalibrated.
+
 **Plugging in the real driver later.** Two hooks: (1) replace each track's
 `LapTable` with one measured from the trained driver (lap time at each grip level
 and fuel load); (2) set `attack_skill_s` / `defend_skill_s` (or refit

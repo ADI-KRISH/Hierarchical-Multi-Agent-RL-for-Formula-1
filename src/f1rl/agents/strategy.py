@@ -35,6 +35,7 @@ from f1rl.config import (
     StrategyParams,
     StrategyRewardParams,
 )
+from f1rl.driver_profile import DriverProfile, load_profile, save_profile
 from f1rl.envs.racetrack import TUM_HELD_OUT, TUM_TRAIN, TUM_VALIDATION
 from f1rl.envs.strategy_env import StrategyEnv, load_race_track
 
@@ -57,6 +58,9 @@ class StrategyRun:
     eval_races: int = 12  # per evaluation, spread over the validation tracks
     train_tracks: str = "train"
     eval_tracks: str = "validation"
+    # Our driver, measured (`scripts/measure_driver.py`): JSON profile path.
+    # Empty = the stand-in driver.
+    driver_profile: str = ""
 
 
 @dataclass(frozen=True)
@@ -102,8 +106,12 @@ def load_strategy_config(path: Path) -> StrategyConfig:
     return config
 
 
-def load_tracks(names: tuple[str, ...], params: StrategyParams) -> dict[str, Any]:
-    return {n: load_race_track(n, EXAMPLE_CAR, params) for n in names}
+def load_tracks(
+    names: tuple[str, ...],
+    params: StrategyParams,
+    profile: DriverProfile | None = None,
+) -> dict[str, Any]:
+    return {n: load_race_track(n, EXAMPLE_CAR, params, profile=profile) for n in names}
 
 
 # --- policies ------------------------------------------------------------------------
@@ -188,10 +196,15 @@ def train(config: StrategyConfig, run_dir: Path) -> None:
     eval_names = SPLITS.get(run.eval_tracks, (run.eval_tracks,))
     params = config.strategy_params(train_names)
     base = config.baseline_params()
-    train_tracks = load_tracks(train_names, params)
-    eval_env = StrategyEnv(load_tracks(eval_names, params), params, baseline=base)
+    profile = load_profile(Path(run.driver_profile)) if run.driver_profile else None
+    train_tracks = load_tracks(train_names, params, profile)
+    eval_env = StrategyEnv(
+        load_tracks(eval_names, params, profile), params, baseline=base, profile=profile
+    )
 
     run_dir.mkdir(parents=True)
+    if profile is not None:
+        save_profile(profile, run_dir / "driver_profile.json")
     (run_dir / "config.yaml").write_text(
         yaml.safe_dump({"strategy": True, **asdict(config)}), encoding="utf-8"
     )
@@ -209,7 +222,7 @@ def train(config: StrategyConfig, run_dir: Path) -> None:
     )
 
     vec = make_vec_env(
-        lambda: StrategyEnv(train_tracks, params, baseline=base),
+        lambda: StrategyEnv(train_tracks, params, baseline=base, profile=profile),
         n_envs=run.n_envs,
         seed=run.seed,
     )
@@ -289,13 +302,17 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n-cars", type=int, default=None)
     parser.add_argument("--json", type=Path, default=None, help="Write results here.")
+    parser.add_argument(
+        "--profile", type=Path, default=None, help="Our driver, measured (JSON)."
+    )
     args = parser.parse_args()
 
     tracks = SPLITS[args.split]
     params = StrategyParams(tracks=tracks)
     if args.n_cars:
         params = replace(params, n_cars=args.n_cars)
-    env = StrategyEnv(load_tracks(tracks, params), params)
+    profile = load_profile(args.profile) if args.profile else None
+    env = StrategyEnv(load_tracks(tracks, params, profile), params, profile=profile)
     policies: dict[str, Policy] = {}
     for spec in args.policy or ["baseline", "random"]:
         if spec == "baseline":

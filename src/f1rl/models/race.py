@@ -9,6 +9,7 @@ crosses the line just behind it (`resolve_lap`).
 """
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -20,6 +21,7 @@ from f1rl.config import (
     StrategyParams,
     TireParams,
 )
+from f1rl.driver_profile import PassCurve
 from f1rl.models.raceline import gg_lap_time_s
 from f1rl.models.tire import tire_grip, tire_wear_step
 
@@ -79,10 +81,15 @@ class LapTable:
 
 
 def build_lap_table(
-    car: CarParams, ds: float | Array, kappa: Array, params: StrategyParams
+    car: CarParams,
+    ds: float | Array,
+    kappa: Array,
+    params: StrategyParams,
+    gap: Callable[[float], float] | None = None,
 ) -> LapTable:
-    """Lap-time table of the stand-in driver on the closed path (``ds``,
-    ``kappa``), usually the track's optimal line."""
+    """Lap-time table on the closed path (``ds``, ``kappa``), usually the track's
+    optimal line: the g-g limit lap times 1 + ``gap(grip)``, a driver's measured
+    pace gap (`f1rl.driver_profile`), or the stand-in's fixed ``driver_gap``."""
     n = round((params.grip_max - params.grip_min) / params.grip_step) + 1
     grips = np.linspace(params.grip_min, params.grip_max, n)
     fuels = np.linspace(0.0, params.start_fuel_kg, params.fuel_points)
@@ -91,7 +98,8 @@ def build_lap_table(
         heavy = fuel_car(car, float(fuel))
         for i, g in enumerate(grips):
             limit = gg_lap_time_s(grip_car(heavy, float(g)), ds, kappa)
-            times[i, j] = limit * (1.0 + params.driver_gap)
+            extra = params.driver_gap if gap is None else gap(float(g))
+            times[i, j] = limit * (1.0 + extra)
     return LapTable(grips, fuels, times)
 
 
@@ -180,6 +188,8 @@ def resolve_lap(
     pitted: list[bool],
     draws: list[float],
     ours: int | None = None,
+    our_attack: PassCurve | None = None,
+    our_defend: PassCurve | None = None,
 ) -> tuple[list[int], list[float]]:
     """Cars meet on track: (new running order, each car's time at the line).
 
@@ -190,6 +200,12 @@ def resolve_lap(
     per attempt, cycled), or crosses ``min_gap_s`` behind it. A car that stopped is
     passed and passes freely: the pit lane is a separate road. ``ours`` gets
     ``attack_skill_s`` when it attacks and costs attackers ``defend_skill_s``.
+
+    With a measured curve for our driver (``our_attack`` when ``ours`` attacks,
+    ``our_defend`` when a car attacks ``ours``, from `f1rl.driver_profile`), that
+    curve's odds apply to any car that has caught the other (within ``min_gap_s``
+    at the line): it was measured from battles that start that close, so it
+    already says whether the quicker car gets by in a lap.
     """
     end = [s + t for s, t in zip(start_s, lap_s, strict=True)]
     new: list[int] = []
@@ -204,14 +220,17 @@ def resolve_lap(
                 free = end[c] < end[a]
             else:
                 adv = lap_s[a] - lap_s[c]
+                curve = our_attack if c == ours else our_defend if a == ours else None
                 if c == ours:
                     adv += params.attack_skill_s
                 if a == ours:
                     adv -= params.defend_skill_s
-                free = end[c] < end[a] and draws[k % len(draws)] < pass_probability(
-                    params, adv
-                )
+                draw = draws[k % len(draws)]
                 k += 1
+                if curve is not None:
+                    free = draw < curve.probability(adv)
+                else:
+                    free = end[c] < end[a] and draw < pass_probability(params, adv)
             if not free:
                 end[c] = end[a] + params.min_gap_s
                 break

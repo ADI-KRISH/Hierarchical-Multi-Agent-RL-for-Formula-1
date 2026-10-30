@@ -16,6 +16,7 @@ lap, plus places gained, and at the flag a penalty per place behind the winner
 and a disqualification penalty for running only one compound.
 """
 
+import hashlib
 import json
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -33,6 +34,7 @@ from f1rl.config import (
     StrategyParams,
     TireParams,
 )
+from f1rl.driver_profile import DriverProfile
 from f1rl.models.race import (
     CarState,
     LapPlan,
@@ -65,10 +67,16 @@ class RaceTrackInfo:
 
 
 def load_race_track(
-    name: str, car: CarParams, params: StrategyParams, cache_dir: Path | None = None
+    name: str,
+    car: CarParams,
+    params: StrategyParams,
+    cache_dir: Path | None = None,
+    profile: DriverProfile | None = None,
 ) -> RaceTrackInfo:
     """A TUM track's lap-time table on its optimal line, cached as JSON under
-    ``cache_dir`` (default data/strategy/) after the first build."""
+    ``cache_dir`` (default data/strategy/) after the first build. With a measured
+    ``profile`` that covers the track, lap times carry our driver's own pace gap;
+    otherwise the stand-in's ``driver_gap``."""
     from f1rl.config import RaceEnvParams
     from f1rl.envs.racetrack import DATA_DIR, load_tum_track
     from f1rl.models.raceline import optimal_line
@@ -80,6 +88,11 @@ def load_race_track(
         f"_m{car.mass_kg:g}_a{car.max_accel_g:g}_l{car.max_lateral_g:g}"
         f"_b{car.max_braking_g:g}_v{car.max_speed_ms:g}"
     )
+    measured = profile is not None and name in profile.pace
+    if measured:
+        assert profile is not None
+        pace = json.dumps(profile.pace[name]).encode()
+        key += "_p" + hashlib.sha1(pace).hexdigest()[:10]
     path = folder / f"{key}.json"
     if path.exists():
         d = json.loads(path.read_text())
@@ -90,7 +103,17 @@ def load_race_track(
     track = load_tum_track(name)
     env = RaceEnvParams()
     line = optimal_line(track, car, env.car_half_width_m + env.line_safety_m)
-    table = build_lap_table(car, line.ds, line.kappa, params)
+    gap = None
+    if measured:
+        assert profile is not None
+        prof = profile
+
+        def gap(grip: float) -> float:
+            value = prof.gap(name, grip)
+            assert value is not None
+            return value
+
+    table = build_lap_table(car, line.ds, line.kappa, params, gap)
     length = float(np.sum(line.ds))
     folder.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -117,6 +140,7 @@ class StrategyEnv(gym.Env[Obs, Any]):
         params: StrategyParams,
         tire: TireParams | None = None,
         baseline: StrategyBaselineParams | None = None,
+        profile: DriverProfile | None = None,
     ) -> None:
         if not tracks:
             raise ValueError("StrategyEnv needs at least one track")
@@ -126,6 +150,8 @@ class StrategyEnv(gym.Env[Obs, Any]):
         self.params = params
         self.tire = tire or TireParams()
         self.baseline = baseline or StrategyBaselineParams()
+        # Our driver's measured race-craft (None: the field's odds, `StrategyParams`).
+        self.profile = profile
         self.action_space = spaces.MultiDiscrete([4, len(params.push_levels)])
         self.observation_space = spaces.Box(-1.0, 1.0, (OBS_SIZE,), np.float32)
         self.track = next(iter(tracks.values()))
@@ -278,7 +304,15 @@ class StrategyEnv(gym.Env[Obs, Any]):
         before = self._position()
         draws = [float(x) for x in self.np_random.random(4 * n)]
         self.order, end = resolve_lap(
-            p, self.order, start_s, laps, pitted, draws, ours=0
+            p,
+            self.order,
+            start_s,
+            laps,
+            pitted,
+            draws,
+            ours=0,
+            our_attack=self.profile.attack if self.profile else None,
+            our_defend=self.profile.defend if self.profile else None,
         )
         self.cars = [replace(c, time_s=e) for c, e in zip(new_cars, end, strict=True)]
         self.last_lap_s = end[0] - start_s[0]

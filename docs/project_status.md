@@ -1,4 +1,4 @@
-# Project status: done and to do (updated 2026-10-26)
+# Project status: done and to do (updated 2026-10-30)
 
 Driver Agent for the F1 RL project (repo `ADI-KRISH/Hierarchical-Multi-Agent-RL-for-Formula-1`).
 Run-by-run training numbers are in `docs/training_log.md`; the phase notes are in `PROGRESS.md`.
@@ -339,3 +339,40 @@ Validation (270 battles): scripted 17, model at start 20; training flat (best 22
 | guard_slow | 26/175 | 30/175 |
 | trained defender | 5/175 | 13/175 |
 | total | 37/525 | 51/525 |
+
+### Main driver learns to defend (2026-10-30, branch `claude/project-thread-0kerne`)
+
+User request: teach the main (overtaking) driver to defend, on its own branch.
+Section battles now include defences: our car at the start of a straight or
+braking zone, an attacker 6.5-16 m behind, our tyres worn. Attackers are a mix of
+rule-based cars (`rival_tactician`, `rival_tactician_fast`, `attacker`) and a
+frozen copy of our own overtaking driver (`rival_behind` driven by
+`attacker_model`). Held = still ahead at the section's end, no pass stuck, clean.
+New options: `defend_moves_only` (with a car behind only line / cover / inside),
+`chop_line_relative` (a chop is a step further off our racing line toward the
+attacker; returning to the line is fine). Run 1 (`configs/defend_sections.yaml`)
+was flat. Run 2 (`configs/defend_sections_v2.yaml`: wear up to 0.7, behaviour
+cloning of the scripted defence for 40k decisions, 30% defences, lr 1e-4) is the
+result; `runs/defend_sections_v2/model_best.zip` (500k decisions).
+
+Oracle check (validation, wear 0.6): the best single cover/inside at the best
+moment saves only 16 of 106 lost defences, so the ceiling with these moves is
+about 150/240 vs 134 for just holding the line. Defending moves matter little in
+this sim; better moves (hold the inside through the corner, defensive late
+braking) are the next lever.
+
+Held-out (5 unseen tracks, gap 9 m, wear 0.6, 460 defences = 115 sections x 4
+attackers; attack vs `slow` + `guard_slow`, 350 battles):
+
+| driver | defences held | contacts | off track | too close | attack |
+|---|---|---|---|---|---|
+| never defend (line) | 264 | 0 | 0 | 104 | - |
+| scripted defender | 257 | 0 | 1 | 111 | - |
+| starting model | 254 | 2 | 0 | 98 | 29 |
+| **defend run 2** | **273** | 2 | 2 | **88** | **49** |
+
+Both contacts are the same rule-based attacker running into us at Silverstone T14,
+for the starting model too. Attack improved (29 to 49 of 350), so defending did
+not cost overtaking. Lap pace was not re-measured (the pace planner is unchanged).
+Scripts: `scripts/section_gate.py --attacker --wear`, `scripts/defend_oracle.py`,
+`scripts/section_demo.py --attacker --wear` (defend replays).

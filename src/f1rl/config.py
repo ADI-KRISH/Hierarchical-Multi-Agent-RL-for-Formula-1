@@ -541,11 +541,13 @@ class RaceEnvParams:
     # ours. Checked 2026-10-29: of 43 "dirty" two-corner battles of the scripted
     # driver, 20 ended ahead and 21 had "side" steps. False = earlier runs.
     side_own_fault: bool = False
-    # The "chop" rule for the car ahead counts only its sideways steps off its own
-    # racing line toward the other car (a move across its nose), not the line's own
-    # sweep across the road. Checked 2026-10-30: a defender that only drove the
-    # racing line was "dirty" in 130 of 240 validation defend battles (the attacker
-    # sitting a few metres back, half out of the tow). False = earlier runs.
+    # In a defence (the other car started behind), the "chop" rule counts only our
+    # sideways steps further off our own racing line toward the car behind (a move
+    # across its nose); driving the line's own sweep across the road, or moving
+    # back to the line, is not. Alongside, the "side" rule still asks for room.
+    # Attack battles keep the old rule (no cutting back in front after a pass).
+    # Checked 2026-10-30: a defender that only drove the racing line was "dirty"
+    # in 130 of 240 validation defend battles. False = earlier runs.
     chop_line_relative: bool = False
     # Tactical env: after a pass (or alongside), hold the current offset rather than
     # move back across into the other car's lane before clear of its nose by

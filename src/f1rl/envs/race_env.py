@@ -627,16 +627,16 @@ class RaceEnv(gym.Env[ObsType, ActType]):
                 shrink = abs(opp_before.n_m - before.n_m) - abs(opp.state.n_m - now.n_m)
                 toward = 1.0 if opp.state.n_m > now.n_m else -1.0
                 mine = (now.n_m - before.n_m) * toward
-                if (
-                    p.chop_line_relative
-                    and wrap_gap(now.s_m - opp.state.s_m, self._lap_m) > p.car_length_m
-                ):
-                    # Ahead: a chop is a step off our own racing line toward it;
-                    # driving the line itself (the car behind put its nose there)
-                    # is not.
+                ahead_m = wrap_gap(now.s_m - opp.state.s_m, self._lap_m)
+                if p.chop_line_relative and self._defending and ahead_m > 0:
+                    # Defending: a chop is a step further off our own racing line
+                    # toward the car behind. Driving the line (the attacker put
+                    # its nose there) or moving back to it is not; alongside, the
+                    # "side" rule still asks for room.
                     off_now = now.n_m - self._line_n(now.s_m)
                     off_before = before.n_m - self._line_n(before.s_m)
-                    mine = min(mine, (off_now - off_before) * toward)
+                    step = (off_now - off_before) * toward
+                    mine = min(mine, step if abs(off_now) > abs(off_before) else 0.0)
                 lat = min(shrink, mine) / dt
                 why = self._too_close(opp.state, now, lat)
                 if why:

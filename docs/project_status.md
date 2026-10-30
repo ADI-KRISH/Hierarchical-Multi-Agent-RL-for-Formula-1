@@ -172,7 +172,7 @@ Details: `docs/strategy_agent_design.md`, "What is built".
 - [x] Lap-time lookup from the g-g simulator for grip and fuel (`LapTable`), the stand-in driver.
 - [x] Rule-based baseline strategy (`FixedPlan`).
 - [x] PPO trainer (`configs/strategy_ppo.yaml`) and paired comparison CLI.
-- [ ] Measure our driver's lap table and pass/defend rates; plug them in; full training.
+- [x] Measure our driver's lap table and pass/defend rates; plug them in; full training (held-out: place 6.03 vs 6.80 for the rule-based plan; `docs/strategy_agent_design.md`).
 - [ ] Calibrate compounds and pit loss from FastF1 stints (laptop).
 - [ ] Send the push level to the driver's observation.
 

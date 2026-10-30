@@ -801,6 +801,36 @@ stint. It beats the rule-based plan on unseen tracks, by less than on validation
 This only says the env is learnable; the numbers mean nothing for F1 until the
 compounds are calibrated and the real driver is plugged in.
 
+**On our driver (2026-10-30).** `scripts/measure_driver.py` drove the defend run 2
+driver (`runs/defend_sections_v2/model_best.zip`) on all 25 tracks: 225 solo laps
+and 1,512 one-lap battles, 0 contacts, 0.4% off track. Result
+(`configs/driver_profiles/defend_v2.json`):
+
+- Pace: laps 9.0% off the g-g limit on average (aero drag plus the moves), so all
+  lap times scale up; the field is assumed to drive like ours.
+- Attack (vs the scripted `guard_*` defenders): 50% chance of a pass in a lap only
+  with a 4.9 s/lap pace advantage. Equal pace: 10/72 on new tyres, 0/144 on worn.
+- Defend (vs tactician, fast tactician, attacker, frozen main driver): passed 50%
+  of the time at a 1.0 s/lap attacker advantage. New tyres: held 214/288.
+
+Run `configs/strategy_driver.yaml` (1.5M laps, laptop, ~15 min; 26 inputs incl.
+where a stop would rejoin). Best checkpoint at 1.05M laps: validation place 5.08
+vs 6.71 for the rule-based plan. Held-out, 40 paired races, 10 cars:
+
+| | place | race time | undercuts / race | undercut on us |
+|---|---|---|---|---|
+| rule-based M->H at 45% | 6.80 | 4859.0 s | 0.28 | 0.05 |
+| random | 9.60 | 4927.9 s (95% legal) | | |
+| **strategy agent** | **6.03** | **4854.5 s** | 0.30 | 0.00 |
+
+Better than the rule-based plan in 22 races, same in 12, worse in 6 (+0.78 places
+a race). What it learned: always medium -> hard, one stop (stop between 43% and 59%
+of the race, timed to the cars around it), conserve the tyres most of the race
+(push 0 on 58% of laps) and push in the laps before the stop. Because our driver
+needs ~5 s/lap more pace to pass, track position is worth more than fresh tyres,
+so extra stops never paid. No overcuts were counted for any strategy: the race
+model has no cold-tyre out-lap, so staying out rarely wins a place.
+
 **Plugging in the real driver later.** Two hooks: (1) replace each track's
 `LapTable` with one measured from the trained driver (lap time at each grip level
 and fuel load); (2) set `attack_skill_s` / `defend_skill_s` (or refit

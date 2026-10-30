@@ -63,6 +63,8 @@ class StrategyRun:
     driver_profile: str = ""
     # One process per env (faster with many cores); False = all in this process.
     subproc: bool = False
+    # Keep the checkpoint with the best mean place ("position") or most wins.
+    select_by: str = "position"
 
 
 @dataclass(frozen=True)
@@ -177,6 +179,8 @@ def compare(
             "race_time_s": float(np.mean([r["race_time_s"] for r in results])),
             "legal": float(np.mean([r["legal"] for r in results])),
             "stops": float(np.mean([r["stops"] for r in results])),
+            "wins": float(np.mean([r["position"] == 1 for r in results])),
+            "podiums": float(np.mean([r["position"] <= 3 for r in results])),
             **{
                 k: float(np.mean([r[k] for r in results]))
                 for k in ("undercuts", "overcuts", "undercut_on_us", "overcut_on_us")
@@ -254,8 +258,10 @@ def train(config: StrategyConfig, run_dir: Path) -> None:
                         "race_time_s",
                         "legal",
                         "stops",
+                        "wins",
                         "baseline_position",
                         "baseline_race_time_s",
+                        "baseline_wins",
                     ]
                 )
 
@@ -278,13 +284,17 @@ def train(config: StrategyConfig, run_dir: Path) -> None:
                         res["race_time_s"],
                         res["legal"],
                         res["stops"],
+                        res["wins"],
                         ref["position"],
                         ref["race_time_s"],
+                        ref["wins"],
                     ]
                 )
             print(f"{self.num_timesteps:>9,}: {res}")
             # Illegal races are disqualified: rank them last.
             score = res["position"] + (1.0 - res["legal"]) * params.n_cars
+            if run.select_by == "wins":  # most wins; finishing place breaks ties
+                score += -res["wins"] * 100.0
             if score < self.best:
                 self.best = score
                 self.model.save(run_dir / "model_best.zip")
@@ -335,7 +345,8 @@ def main() -> None:
     for name, res in results.items():
         print(
             f"{name:>12}: place {res['position']:.2f}, race "
-            f"{res['race_time_s']:.1f} s, legal {res['legal']:.0%}, "
+            f"{res['race_time_s']:.1f} s, wins {res['wins']:.0%}, podiums "
+            f"{res['podiums']:.0%}, legal {res['legal']:.0%}, "
             f"stops {res['stops']:.2f}, per race: undercuts {res['undercuts']:.2f} "
             f"overcuts {res['overcuts']:.2f} (against us {res['undercut_on_us']:.2f}"
             f" / {res['overcut_on_us']:.2f})"

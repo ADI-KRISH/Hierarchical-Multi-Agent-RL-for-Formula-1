@@ -153,3 +153,34 @@ def test_rejoin_features(tracks: dict[str, RaceTrackInfo]) -> None:
     assert place == 1.0
     assert behind == 1.0
     assert 0.0 < ahead < 1.0
+
+
+def test_baseline_rivals_and_win_bonus(tracks: dict[str, RaceTrackInfo]) -> None:
+    p = replace(PARAMS, rivals="baseline", car_pace_spread=0.0)
+    env = StrategyEnv(tracks, p)
+    env.reset(seed=0, options={"laps": LAPS})
+    assert all(plan.params.stints == ("medium", "hard") for plan in env.plans)
+    stops = {plan.params.stop_fractions for plan in env.plans[1:]}
+    assert len(stops) > 1  # jittered, not all on the same lap
+    with pytest.raises(ValueError):
+        StrategyEnv(tracks, replace(PARAMS, rivals="nope")).reset(seed=0)
+    # From pole with no stop lost: the win bonus is paid at the flag.
+    won = replace(p, reward=replace(p.reward, win_bonus=100.0))
+    env = StrategyEnv(tracks, won)
+    env.reset(seed=0, options={"laps": 3, "grid": 1})
+    rewards = [env.step(np.array(a))[1] for a in ([2, 2], [3, 2], [0, 2])]
+    info = env._info()
+    if info["position"] == 1 and info["legal"]:
+        assert rewards[-1] > 50.0
+
+
+def test_tyre_inputs(tracks: dict[str, RaceTrackInfo]) -> None:
+    env = StrategyEnv(tracks, PARAMS)
+    env.reset(seed=0, options={"laps": LAPS})
+    fresh = env._life_laps("hard", 0.0)
+    assert fresh > env._life_laps("hard", 0.5) > 0.0
+    assert env._life_laps("soft", 0.0) < env._life_laps("medium", 0.0) < fresh
+    me = env.cars[0]
+    assert env._tyre_lap(me, "soft", 0.0) < env._tyre_lap(me, "hard", 0.0)
+    assert env._tyre_lap(me, "medium", 0.6) > env._tyre_lap(me, "medium", 0.0)
+    assert env._tyre_gap(None) == 0.0

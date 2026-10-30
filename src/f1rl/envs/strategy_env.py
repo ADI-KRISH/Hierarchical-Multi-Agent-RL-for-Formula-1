@@ -26,7 +26,11 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from f1rl.agents.strategy_baseline import FixedPlan, sample_rival_plan
+from f1rl.agents.strategy_baseline import (
+    FixedPlan,
+    baseline_rival,
+    sample_rival_plan,
+)
 from f1rl.config import (
     COMPOUNDS,
     CarParams,
@@ -45,6 +49,7 @@ from f1rl.models.race import (
     race_laps,
     resolve_lap,
 )
+from f1rl.models.tire import tire_grip
 
 Obs = np.typing.NDArray[np.float32]
 
@@ -52,7 +57,7 @@ Obs = np.typing.NDArray[np.float32]
 GAP_SCALE_S = 30.0
 #: Two stops this many laps apart or fewer can make an undercut or overcut.
 UNDERCUT_WINDOW_LAPS = 5
-OBS_SIZE = 26
+OBS_SIZE = 38
 
 
 @dataclass(frozen=True, eq=False)
@@ -218,8 +223,49 @@ class StrategyEnv(gym.Env[Obs, Any]):
             COMPOUNDS.index(self.cars[ahead].compound) / 2
             if ahead is not None
             else 0.0,
+            # Tyre delta: s/lap a fresh set of each compound would gain now, and
+            # our tyres' pace against the cars ahead and behind on theirs.
+            *[
+                float(np.clip((now - self._tyre_lap(me, c, 0.0)) / 5.0, -1, 1))
+                for c in COMPOUNDS
+                for now in (self._tyre_lap(me, me.compound, me.wear),)
+            ],
+            self._tyre_gap(ahead),
+            self._tyre_gap(behind),
+            # Tyre life left: laps to the wear limit at normal push / laps to go.
+            min(1.0, self._life_laps(me.compound, me.wear) / max(1, n - self.lap)),
+            # Pit window: could a new set of each compound run to the flag?
+            *[
+                min(1.0, self._life_laps(c, 0.0) / max(1, n - self.lap) / 2)
+                for c in COMPOUNDS
+            ],
+            # Compounds run so far (the rule needs two).
+            *[1.0 if c in me.compounds_used else 0.0 for c in COMPOUNDS],
         ]
         return np.clip(np.array(obs, dtype=np.float32), -1.0, 1.0)
+
+    def _tyre_lap(self, car: CarState, compound: str, wear: float) -> float:
+        """A car's lap time (s) at normal push on ``compound`` worn ``wear``."""
+        p = self.params
+        normal = push_grip_fraction(p, p.push_levels[self.baseline.push_index])
+        grip = normal * p.compound(compound).grip * tire_grip(self.tire, wear)
+        return self.track.table.lap_time_s(grip * car.pace, car.fuel_kg)
+
+    def _tyre_gap(self, other: int | None) -> float:
+        """Our lap time minus ``other``'s on our own tyres (s, /2, clipped): > 0
+        when its tyres are quicker than ours."""
+        if other is None:
+            return 0.0
+        me, them = self.cars[0], self.cars[other]
+        mine = self._tyre_lap(me, me.compound, me.wear)
+        theirs = self._tyre_lap(me, them.compound, them.wear)
+        return float(np.clip((mine - theirs) / 2.0, -1.0, 1.0))
+
+    def _life_laps(self, compound: str, wear: float) -> float:
+        """Laps left before ``compound`` at ``wear`` passes the wear limit
+        (`StrategyBaselineParams.max_wear`) at push 0.5."""
+        per_lap = self.ref_lap_s / self.params.compound(compound).life_s
+        return max(0.0, self.baseline.max_wear - wear) / per_lap
 
     def _rejoin(self) -> list[float]:
         """If we stopped this lap: (place we would rejoin in, gap to the car that
@@ -296,9 +342,19 @@ class StrategyEnv(gym.Env[Obs, Any]):
         self.total_laps = int(opts.get("laps", self.track.laps))
         self.lap = 0
         n_push = len(p.push_levels)
-        self.plans = [FixedPlan(self.baseline)] + [
-            sample_rival_plan(rng, self.baseline, n_push) for _ in range(p.n_cars - 1)
-        ]
+        if p.rivals == "baseline":
+            rivals = [
+                baseline_rival(rng, self.baseline, p.rival_stop_jitter)
+                for _ in range(p.n_cars - 1)
+            ]
+        elif p.rivals == "mixed":
+            rivals = [
+                sample_rival_plan(rng, self.baseline, n_push)
+                for _ in range(p.n_cars - 1)
+            ]
+        else:
+            raise ValueError(f"unknown rivals {p.rivals!r}: mixed or baseline")
+        self.plans = [FixedPlan(self.baseline), *rivals]
         paces = [1.0] + [
             float(1.0 + rng.uniform(-p.car_pace_spread, p.car_pace_spread))
             for _ in range(p.n_cars - 1)
@@ -395,6 +451,8 @@ class StrategyEnv(gym.Env[Obs, Any]):
             reward -= r.finish_weight * after
             if not info["legal"]:
                 reward -= r.rule_penalty
+            elif after == 0:
+                reward += r.win_bonus
         self.history.append(
             {
                 "lap": self.lap,

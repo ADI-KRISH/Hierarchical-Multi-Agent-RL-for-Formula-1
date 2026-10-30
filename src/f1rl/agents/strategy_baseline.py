@@ -75,3 +75,22 @@ def sample_rival_plan(
             max_wear=base.max_wear,
         )
     )
+
+
+def baseline_rival(
+    rng: np.random.Generator, base: StrategyBaselineParams, jitter: float
+) -> FixedPlan:
+    """A rival running the rule-based plan, each stop moved by up to +/- ``jitter``
+    of the race distance (kept in order and inside the race)."""
+    fractions = sorted(
+        float(np.clip(f + rng.uniform(-jitter, jitter), 0.05, 0.95))
+        for f in base.stop_fractions
+    )
+    return FixedPlan(
+        StrategyBaselineParams(
+            stints=base.stints,
+            stop_fractions=tuple(fractions),
+            push_index=base.push_index,
+            max_wear=base.max_wear,
+        )
+    )

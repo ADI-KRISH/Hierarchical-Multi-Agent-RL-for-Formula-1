@@ -748,6 +748,8 @@ class StrategyRewardParams:
     finish_weight: float = 0.5
     # At the flag, when the car never ran two dry compounds (a disqualification).
     rule_penalty: float = 50.0
+    # At the flag, for a win.
+    win_bonus: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -784,6 +786,11 @@ class StrategyParams:
     push_wear_ratio: float = 3.0
     # Rivals' car pace: each rival's grip is ours times 1 + U(-spread, +spread).
     car_pace_spread: float = 0.015
+    # Rivals' strategies: "mixed" = random templates (`RIVAL_TEMPLATES`), "baseline"
+    # = every rival runs the rule-based plan (`StrategyBaselineParams`), its stops
+    # moved by up to +/- rival_stop_jitter of the race so they do not all pit at once.
+    rivals: str = "mixed"
+    rival_stop_jitter: float = 0.05
     # Following within this gap (s) at the start of a lap costs the whole lap this
     # share of grip (dirty air). Smaller than `RaceEnvParams.dirty_air_loss`, which
     # applies only within 25 m in corners.

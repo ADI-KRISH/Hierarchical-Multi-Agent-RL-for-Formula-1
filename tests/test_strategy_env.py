@@ -121,3 +121,35 @@ def test_race_craft_skill_gains_places(tracks: dict[str, RaceTrackInfo]) -> None
             )
         )
     assert places[1] <= places[0]
+
+
+def test_undercut_and_overcut_are_counted(tracks: dict[str, RaceTrackInfo]) -> None:
+    env = StrategyEnv(tracks, PARAMS)
+    env.reset(seed=0, options={"laps": LAPS})
+    base = [1, 0, 2, 3, 4, 5]
+    swapped = [0, 1, 2, 3, 4, 5]
+    # We stop on lap 10, car 1 (just ahead) on lap 12; we come out ahead.
+    env.orders = [base] * 11 + [base] * 2 + [swapped] * (LAPS - 12)
+    env.stop_laps = [[10], [12], [], [], [], []]
+    assert env.battle_moves()["undercuts"] == 1
+    # Same flip, but car 1 stopped first: an overcut.
+    env.stop_laps = [[12], [10], [], [], [], []]
+    assert env.battle_moves()["overcuts"] == 1
+    # Stops too far apart do not count.
+    env.stop_laps = [[10], [20], [], [], [], []]
+    assert env.battle_moves() == {
+        "undercuts": 0,
+        "overcuts": 0,
+        "undercut_on_us": 0,
+        "overcut_on_us": 0,
+    }
+
+
+def test_rejoin_features(tracks: dict[str, RaceTrackInfo]) -> None:
+    env = StrategyEnv(tracks, PARAMS)
+    env.reset(seed=0, options={"laps": LAPS, "grid": 1})
+    place, ahead, behind = env._rejoin()
+    # From pole with the field 0.3 s apart, a 22 s stop drops us to the back.
+    assert place == 1.0
+    assert behind == 1.0
+    assert 0.0 < ahead < 1.0

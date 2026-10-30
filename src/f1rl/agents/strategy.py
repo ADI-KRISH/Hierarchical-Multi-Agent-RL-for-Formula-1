@@ -61,6 +61,8 @@ class StrategyRun:
     # Our driver, measured (`scripts/measure_driver.py`): JSON profile path.
     # Empty = the stand-in driver.
     driver_profile: str = ""
+    # One process per env (faster with many cores); False = all in this process.
+    subproc: bool = False
 
 
 @dataclass(frozen=True)
@@ -175,6 +177,10 @@ def compare(
             "race_time_s": float(np.mean([r["race_time_s"] for r in results])),
             "legal": float(np.mean([r["legal"] for r in results])),
             "stops": float(np.mean([r["stops"] for r in results])),
+            **{
+                k: float(np.mean([r[k] for r in results]))
+                for k in ("undercuts", "overcuts", "undercut_on_us", "overcut_on_us")
+            },
         }
     return out
 
@@ -188,6 +194,7 @@ def train(config: StrategyConfig, run_dir: Path) -> None:
     from stable_baselines3 import PPO
     from stable_baselines3.common.callbacks import BaseCallback
     from stable_baselines3.common.env_util import make_vec_env
+    from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 
     from f1rl.agents.ppo import git_sha
 
@@ -225,6 +232,7 @@ def train(config: StrategyConfig, run_dir: Path) -> None:
         lambda: StrategyEnv(train_tracks, params, baseline=base, profile=profile),
         n_envs=run.n_envs,
         seed=run.seed,
+        vec_env_cls=SubprocVecEnv if run.subproc else DummyVecEnv,
     )
     model = PPO("MlpPolicy", vec, seed=run.seed, verbose=0, **config.ppo)
     ref = compare(
@@ -328,7 +336,9 @@ def main() -> None:
         print(
             f"{name:>12}: place {res['position']:.2f}, race "
             f"{res['race_time_s']:.1f} s, legal {res['legal']:.0%}, "
-            f"stops {res['stops']:.2f}"
+            f"stops {res['stops']:.2f}, per race: undercuts {res['undercuts']:.2f} "
+            f"overcuts {res['overcuts']:.2f} (against us {res['undercut_on_us']:.2f}"
+            f" / {res['overcut_on_us']:.2f})"
         )
     if args.json:
         args.json.write_text(json.dumps(results, indent=2))

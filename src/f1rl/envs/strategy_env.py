@@ -50,7 +50,9 @@ Obs = np.typing.NDArray[np.float32]
 
 #: Gaps (s) are divided by this and clipped to [0, 1] in the observation.
 GAP_SCALE_S = 30.0
-OBS_SIZE = 20
+#: Two stops this many laps apart or fewer can make an undercut or overcut.
+UNDERCUT_WINDOW_LAPS = 5
+OBS_SIZE = 26
 
 
 @dataclass(frozen=True, eq=False)
@@ -163,6 +165,8 @@ class StrategyEnv(gym.Env[Obs, Any]):
         self.ref_lap_s = 0.0
         self.last_lap_s = 0.0
         self.history: list[dict[str, Any]] = []
+        self.orders: list[list[int]] = []
+        self.stop_laps: list[list[int]] = []
 
     # --- helpers -----------------------------------------------------------------
 
@@ -202,8 +206,65 @@ class StrategyEnv(gym.Env[Obs, Any]):
             min(1.0, self._gap(leader, 0) / (3 * GAP_SCALE_S)),
             self.cars[ahead].tyre_laps / n if ahead is not None else 0.0,
             self.cars[behind].tyre_laps / n if behind is not None else 0.0,
+            # Undercut / overcut: where a stop now would put us, and who still has
+            # to stop.
+            *self._rejoin(),
+            float(np.clip((self.cars[ahead].stops - me.stops) / 2, -1, 1))
+            if ahead is not None
+            else 0.0,
+            float(np.clip((self.cars[behind].stops - me.stops) / 2, -1, 1))
+            if behind is not None
+            else 0.0,
+            COMPOUNDS.index(self.cars[ahead].compound) / 2
+            if ahead is not None
+            else 0.0,
         ]
         return np.clip(np.array(obs, dtype=np.float32), -1.0, 1.0)
+
+    def _rejoin(self) -> list[float]:
+        """If we stopped this lap: (place we would rejoin in, gap to the car that
+        would then be ahead, gap to the one behind), from the gaps at the line."""
+        p = self.params
+        out = self.cars[0].time_s + p.pit_loss_s
+        others = sorted(self.cars[c].time_s for c in self.order if c != 0)
+        place = sum(1 for t in others if t < out)
+        ahead = out - others[place - 1] if place > 0 else GAP_SCALE_S
+        behind = others[place] - out if place < len(others) else GAP_SCALE_S
+        return [
+            place / (p.n_cars - 1),
+            min(1.0, ahead / GAP_SCALE_S),
+            min(1.0, behind / GAP_SCALE_S),
+        ]
+
+    def battle_moves(self) -> dict[str, int]:
+        """Undercuts and overcuts in the race so far, from the stops and running
+        order: our car and a rival that ran just ahead of us (for gains) or just
+        behind (for losses) both stopped within `UNDERCUT_WINDOW_LAPS` of each
+        other, and the order between us flipped across the two stops. We stopped
+        first = an undercut, second = an overcut."""
+        out = {"undercuts": 0, "overcuts": 0, "undercut_on_us": 0, "overcut_on_us": 0}
+        mine = self.stop_laps[0]
+        for lap in mine:
+            for r in range(1, self.params.n_cars):
+                for rl in self.stop_laps[r]:
+                    if rl == lap or abs(rl - lap) > UNDERCUT_WINDOW_LAPS:
+                        continue
+                    first, last = min(lap, rl), max(lap, rl)
+                    if last + 1 >= len(self.orders):
+                        continue
+                    before, after = self.orders[first], self.orders[last + 1]
+                    if abs(before.index(0) - before.index(r)) != 1:
+                        continue  # not the car next to us
+                    was = before.index(0) < before.index(r)
+                    now = after.index(0) < after.index(r)
+                    if was == now:
+                        continue
+                    ours_first = lap < rl
+                    if now:
+                        out["undercuts" if ours_first else "overcuts"] += 1
+                    else:
+                        out["overcut_on_us" if ours_first else "undercut_on_us"] += 1
+        return out
 
     def _info(self) -> dict[str, Any]:
         me = self.cars[0]
@@ -217,6 +278,7 @@ class StrategyEnv(gym.Env[Obs, Any]):
             "wear": me.wear,
             "stops": me.stops,
             "legal": len(me.compounds_used) >= 2,
+            **(self.battle_moves() if self.lap >= self.total_laps else {}),
         }
 
     # --- gym API -------------------------------------------------------------------
@@ -265,6 +327,9 @@ class StrategyEnv(gym.Env[Obs, Any]):
         self.ref_lap_s = self.track.table.lap_time_s(grip, p.start_fuel_kg / 2)
         self.last_lap_s = self.ref_lap_s
         self.history = []
+        # Running order at the start of every lap (index = lap), stop laps per car.
+        self.orders = [list(self.order)]
+        self.stop_laps = [[] for _ in range(p.n_cars)]
         return self._obs(), self._info()
 
     def step(self, action: Any) -> tuple[Obs, float, bool, bool, dict[str, Any]]:
@@ -301,6 +366,8 @@ class StrategyEnv(gym.Env[Obs, Any]):
                 p, self.tire, self.track.table, self.cars[c], plan, burn, dirty
             )
             pitted[c] = plan.pit_to is not None
+            if pitted[c]:
+                self.stop_laps[c].append(self.lap)
         before = self._position()
         draws = [float(x) for x in self.np_random.random(4 * n)]
         self.order, end = resolve_lap(
@@ -317,6 +384,7 @@ class StrategyEnv(gym.Env[Obs, Any]):
         self.cars = [replace(c, time_s=e) for c, e in zip(new_cars, end, strict=True)]
         self.last_lap_s = end[0] - start_s[0]
         self.lap += 1
+        self.orders.append(list(self.order))
         after = self._position()
         r = p.reward
         reward = -r.time_weight * (self.last_lap_s - self.ref_lap_s)

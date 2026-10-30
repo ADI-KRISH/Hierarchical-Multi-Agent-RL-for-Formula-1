@@ -98,6 +98,10 @@ class TacticalEnv(RaceEnv):
         # A rival that stays for every episode (a trained defender), where a
         # self-play rival is drawn per episode.
         self.fixed_rival: Callable[[ObsType], int] | None = None
+        # A frozen copy of the main driver (full observation layout, its own move
+        # list = `moves`) driving every ``rival_behind`` car: the attacker the
+        # driver learns to defend against. Takes priority over `rival` there.
+        self.fixed_attacker: Callable[[ObsType], int] | None = None
         self._opp_move = "line"
 
     def reset(
@@ -243,8 +247,10 @@ class TacticalEnv(RaceEnv):
             [self._observation(), hot, np.array([brake, side], dtype=np.float32)]
         ).astype(np.float32)
 
-    def rival_observation(self) -> ObsType:
-        """What the opponent car sees: our observation with the two cars swapped."""
+    def rival_observation(self, plain: bool | None = None) -> ObsType:
+        """What the opponent car sees: our observation with the two cars swapped
+        (``plain``: the plain layout; None = `rival_plain_obs`)."""
+        plain = self.rival_plain_obs if plain is None else plain
         opp = self._opp
         assert opp is not None
         mine = (self._state, self._last, self._move, self._tow_now)
@@ -253,7 +259,7 @@ class TacticalEnv(RaceEnv):
         self._tow_now = self._tow(self._state, opp.state)
         self._swapped = True
         try:
-            return self._plain_obs() if self.rival_plain_obs else self._tactical_obs()
+            return self._plain_obs() if plain else self._tactical_obs()
         finally:
             self._swapped = False
             opp.state, self._state = self._state, mine[0]
@@ -286,6 +292,10 @@ class TacticalEnv(RaceEnv):
             return
         if opp.kind.startswith("rival_tactician"):
             want = self._tactician_for_rival()
+        elif opp.kind == "rival_behind" and self.fixed_attacker is not None:
+            # A copy of the main driver: its index is into this env's move list.
+            idx = int(self.fixed_attacker(self.rival_observation(plain=False)))
+            want = self.moves[idx]
         elif self.rival is None:
             return
         else:
@@ -293,7 +303,8 @@ class TacticalEnv(RaceEnv):
             want = MOVES[int(self.rival(self.rival_observation()))]
         s = opp.state.s_m
         running = opp.maneuver is not None and s < opp.maneuver.end_s
-        if want == self._opp_move and running:
+        lane = want in LANE_MOVES  # re-aimed at the other car every decision
+        if want == self._opp_move and running and not lane:
             return
         corners = corners_ahead(opp.driver, s)
         in_zone = bool(corners) and corners[0].brake_m < NO_MOVE_BRAKE_M
@@ -306,7 +317,8 @@ class TacticalEnv(RaceEnv):
                 want = "line"  # too late to move across our nose
         shift = opp.state.n_m - opp.driver.base.line_state(s)[0]
         threat = 0.0
-        if wrap_gap(self._state.s_m - s, self._lap_m) < 0:  # we are behind it
+        if wrap_gap(self._state.s_m - s, self._lap_m) < 0 or lane:
+            # We are behind it (what it covers), or a lane move aims beside us.
             threat = self._state.n_m - opp.driver.base.line_state(self._state.s_m)[0]
         opp.maneuver = make_move(want, opp.driver, s, shift, threat_shift=threat)
         self._opp_move = want
@@ -317,6 +329,14 @@ class TacticalEnv(RaceEnv):
         d = self._driver()
         s = self._state.s_m
         corners = corners_ahead(d, s)
+        if (
+            self.params.defend_moves_only
+            and want not in ("line", "cover", "inside")
+            and self._opp is not None
+            and wrap_gap(self._opp.state.s_m - s, self._lap_m) < 0
+        ):
+            self.refused += 1  # the car behind us: defending moves only
+            want = "line"
         # An attacker may pull alongside in a braking zone (moving under braking is
         # a defender's offence); a running cover still may not be switched.
         attacking = (

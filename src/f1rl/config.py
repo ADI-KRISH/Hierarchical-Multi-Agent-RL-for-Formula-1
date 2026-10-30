@@ -453,6 +453,11 @@ class RaceEnvParams:
     # inside once the car behind is within a car length + `guard.min_move_gap_m`
     # (moving across its nose that late forces it to swerve). False = earlier runs.
     defend_rules: bool = False
+    # With another car behind us, only the defending moves (`line`, `cover`,
+    # `inside`): any other pick becomes `line` and counts as refused. Stops a
+    # defender from weaving with moves made for attacking (a lane move re-aims at the
+    # other car every decision: mirroring it is blocking). False = earlier runs.
+    defend_moves_only: bool = False
     # Extra opponent features: its sideways speed, a pass waiting to stick (+1 when
     # we lead and it has not stuck yet, -1 when we were passed and it has not stuck,
     # scaled by how far into `pass_hold_m` it is), whether it is in our tow (a

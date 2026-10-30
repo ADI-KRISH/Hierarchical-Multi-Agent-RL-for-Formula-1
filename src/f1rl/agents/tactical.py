@@ -43,6 +43,7 @@ from f1rl.agents.tactician import choose
 from f1rl.agents.tactics import MOVES, PULL_MOVES
 from f1rl.config import (
     EXAMPLE_CAR,
+    OPPONENT_KINDS,
     CarParams,
     GuardParams,
     RaceEnvParams,
@@ -125,6 +126,25 @@ class TacticalRun:
     defender_moves: list[str] = field(
         default_factory=lambda: ["line", "cover", "inside"]
     )
+    # Defend battles for the main driver: this share of section battles starts with
+    # our car AHEAD and one of ``section_attackers`` ``section_gap_m`` behind, in a
+    # section of one of ``section_defend_kinds`` (the attack builds on a straight or
+    # into a braking zone). Our tyres start with wear drawn from
+    # ``section_defend_wear`` (a worn defender vs a fresh attacker). Held = still
+    # ahead at the end, no pass stuck against us, clean. Evaluations also defend
+    # every such validation section against each of ``section_eval_attackers``.
+    section_defend_frac: float = 0.0
+    section_attackers: list[str] = field(
+        default_factory=lambda: ["rival_tactician", "rival_tactician_fast"]
+    )
+    section_defend_kinds: list[str] = field(
+        default_factory=lambda: ["straight", "braking"]
+    )
+    section_defend_wear: list[float] = field(default_factory=lambda: [0.0, 0.0])
+    section_eval_attackers: list[str] = field(default_factory=list)
+    # A frozen main-driver model (.zip) driving every ``rival_behind`` car: the
+    # driver defends against its own attacking. "" = none (no ``rival_behind``).
+    attacker_model: str = ""
 
 
 @dataclass(frozen=True)
@@ -261,9 +281,25 @@ class MultiTrackTactical(gym.Env[Any, Any]):
             ]
             lo, hi = run.section_gap_m
             gap = float(self.np_random.uniform(lo, hi))
+            options = section_options(self._section, opp, gap)
+            defend = [x for x in secs if x.kind in run.section_defend_kinds]
+            if defend and self.np_random.random() < run.section_defend_frac:
+                self._section = self._pick_section(defend, run, "def_")
+                opp = run.section_attackers[
+                    int(self.np_random.integers(len(run.section_attackers)))
+                ]
+                options = defend_options(
+                    self._section,
+                    opp,
+                    gap,
+                    float(
+                        self.np_random.uniform(
+                            run.section_defend_wear[0], run.section_defend_wear[1]
+                        )
+                    ),
+                )
             obs, info = env.reset(
-                seed=int(self.np_random.integers(2**31 - 1)),
-                options=section_options(self._section, opp, gap),
+                seed=int(self.np_random.integers(2**31 - 1)), options=options
             )
             return obs, info
         if here and self.np_random.random() < self.real_frac:
@@ -283,12 +319,15 @@ class MultiTrackTactical(gym.Env[Any, Any]):
         )
         return obs, info
 
-    def _pick_section(self, secs: list[Section], run: "TacticalRun") -> Section:
+    def _pick_section(
+        self, secs: list[Section], run: "TacticalRun", prefix: str = ""
+    ) -> Section:
         if not run.section_priority:
             return secs[int(self.np_random.integers(len(secs)))]
         # Sections sometimes won and sometimes lost are drawn most (most left to
         # learn there); ones always won or never won yet keep a smaller chance.
-        rate = np.array([self.section_wins.get(x.name, 0.5) for x in secs])
+        # Defending a section is tracked apart from attacking it (``prefix``).
+        rate = np.array([self.section_wins.get(prefix + x.name, 0.5) for x in secs])
         w = rate * (1.0 - rate) + 0.1
         return secs[int(self.np_random.choice(len(secs), p=w / w.sum()))]
 
@@ -297,25 +336,49 @@ class MultiTrackTactical(gym.Env[Any, Any]):
         if self._section is not None and (out[2] or out[3]):
             info = out[4]
             won = float(section_won(info))
-            key = self._section.name
+            key = ("def_" if info["defending"] else "") + self._section.name
             self.section_wins[key] = 0.8 * self.section_wins.get(key, 0.5) + 0.2 * won
             self._section = None
         return out
 
 
 def section_won(info: dict[str, Any]) -> bool:
-    """A section battle is won: ahead at the section's end, the pass stuck, and
-    clean: no contact, never off the track, and never closer to the other car than
-    clean racing allows (``dirty_steps``: `RaceEnvParams.clean_side_m` etc.)."""
+    """A section battle is won: ahead at the section's end, the pass stuck (a
+    defence: no pass stuck against us), and clean: no contact, never off the track,
+    and never closer to the other car than clean racing allows (``dirty_steps``:
+    `RaceEnvParams.clean_side_m` etc.)."""
     clean = not info["contact"] and not info["off_track"] and not info["dirty_steps"]
-    return bool(info["section_won"] and info["passes"] >= 1 and clean)
+    need = 0 if info.get("defending") else 1
+    return bool(info["section_won"] and info["passes"] >= need and clean)
+
+
+def defend_options(
+    sec: Section, attacker: str, gap_m: float, wear: float = 0.0
+) -> dict[str, Any]:
+    """`RaceEnv.reset` options for DEFENDING ``sec``: our car at its start on the
+    racing line, ``attacker`` ``gap_m`` behind, our tyres ``wear`` worn."""
+    opts = section_options(sec, attacker, gap_m)
+    opts.update(start_shift_m=0.0, gap_m=gap_m, wear=wear)
+    return opts
 
 
 def section_battle(
-    env: TacticalEnv, policy: Any, sec: Section, opponent: str, gap_m: float
+    env: TacticalEnv,
+    policy: Any,
+    sec: Section,
+    opponent: str,
+    gap_m: float,
+    wear: float = 0.0,
 ) -> dict[str, Any]:
-    """One deterministic section battle (see `f1rl.sections`)."""
-    obs, info = env.reset(seed=0, options=section_options(sec, opponent, gap_m))
+    """One deterministic section battle (see `f1rl.sections`); against a car that
+    starts behind (an attacker), a defence."""
+    behind = OPPONENT_KINDS[opponent][1] == "behind"
+    options = (
+        defend_options(sec, opponent, gap_m, wear)
+        if behind
+        else section_options(sec, opponent, gap_m)
+    )
+    obs, info = env.reset(seed=0, options=options)
     for _ in range(2000):
         obs, _, term, trunc, info = env.step(pick(env, obs, policy))
         if term or trunc:
@@ -419,9 +482,13 @@ class ScenarioCallback(BaseCallback):
         sections: dict[str, list[Section]] | None = None,
         section_opponents: list[str] | None = None,
         section_gap_m: float = 12.0,
+        section_attackers: list[str] | None = None,
+        defend_kinds: list[str] | None = None,
     ) -> None:
         super().__init__()
         self.sections = sections or {}
+        self.section_attackers = section_attackers or []
+        self.defend_kinds = defend_kinds or []
         self.section_opponents = section_opponents or []
         self.section_gap_m = section_gap_m
         self.run_dir = run_dir
@@ -482,12 +549,23 @@ class ScenarioCallback(BaseCallback):
             for o in self.section_opponents
             for g in (self.section_gap_m,)
         ]
-        for kind in KINDS:
+        sec_rows += [
+            (
+                f"def_{sec.kind}",
+                section_battle(self.real_envs[name], self.model, sec, o, g),
+            )
+            for name, secs in self.sections.items()
+            for sec in secs
+            if sec.kind in self.defend_kinds
+            for o in self.section_attackers
+            for g in (self.section_gap_m,)
+        ]
+        for kind in (*KINDS, *(f"def_{k}" for k in KINDS)):
             res = [r for k, r in sec_rows if k == kind]
             if res:
                 rows.append(
                     (
-                        f"sec_{kind}",
+                        kind if kind.startswith("def_") else f"sec_{kind}",
                         sum(r["won"] for r in res),
                         len(res),
                         sum(r["contact"] for r in res),
@@ -528,6 +606,23 @@ def use_defender(envs: Iterable[TacticalEnv], path: str, moves: Sequence[str]) -
         env.fixed_rival = drive
         env.rival = drive
         env.rival_plain_obs = True
+
+
+def use_attacker(envs: Iterable[TacticalEnv], path: str) -> None:
+    """Make a frozen main-driver model drive every ``rival_behind`` car of ``envs``
+    (`TacticalEnv.fixed_attacker`), from the full observation layout."""
+    policy = PPO.load(path, device="cpu").policy
+    policy.set_training_mode(False)
+
+    def drive(obs: Any) -> int:
+        return int(policy.predict(obs, deterministic=True)[0])
+
+    for env in envs:
+        n_saved = policy.observation_space.shape[0]  # type: ignore[index]
+        n_env = env.observation_space.shape[0]  # type: ignore[index]
+        if n_saved != n_env:
+            raise ValueError(f"attacker model sees {n_saved} inputs, env has {n_env}")
+        env.fixed_attacker = drive
 
 
 def load_grown(model: PPO, path: str) -> list[str]:
@@ -614,6 +709,8 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
         }
         if run.defender_model:
             use_defender(envs.values(), run.defender_model, run.defender_moves)
+        if run.attacker_model:
+            use_attacker(envs.values(), run.attacker_model)
         return envs
 
     starts: dict[str, list[RealStart]] = {}
@@ -642,11 +739,11 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
     pool = RivalPool(run.pool_size)
     train_secs: dict[str, list[Section]] = {}
     val_secs: dict[str, list[Section]] = {}
-    if run.section_frac > 0 or run.section_eval_opponents:
+    if run.section_frac > 0 or run.section_eval_opponents or run.section_eval_attackers:
         sp = config.section_params()
         probe = make_envs(train_names + val_names, "random", run.seed)
         train_secs = {n: env_sections(probe[n], sp) for n in train_names}
-        if run.section_eval_opponents:
+        if run.section_eval_opponents or run.section_eval_attackers:
             val_secs = {n: env_sections(probe[n], sp) for n in val_names}
         print(
             f"Sections: {sum(map(len, train_secs.values()))} on the training tracks, "
@@ -723,6 +820,8 @@ def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -
         val_secs,
         run.section_eval_opponents,
         run.section_eval_gap_m,
+        run.section_eval_attackers,
+        run.section_defend_kinds,
     )
     callbacks: list[BaseCallback] = [callback]
     if run.rival_frac > 0:

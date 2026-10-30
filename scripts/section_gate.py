@@ -7,6 +7,12 @@ battle per opponent kind: our car starts ``--gap`` m behind the opponent at the
 section's start and wins only if it is ahead at the section's end, the pass then
 sticks (``pass_hold_m``), and nothing is hit or run off. Prints wins by section kind
 and opponent, and writes every battle (the per-section scorecard) to ``--out``.
+
+Defend battles (``--opponents`` that start behind, e.g. ``rival_tactician``): our
+car starts ahead on the racing line in each straight / braking-zone section
+(``run.section_defend_kinds``) with tyres ``--wear`` worn; held = still ahead at
+the end, no pass stuck against us, clean. ``--attacker`` sets the model that drives
+``rival_behind`` (a frozen copy of the main driver).
 """
 
 import argparse
@@ -17,7 +23,13 @@ from typing import Any
 
 import yaml
 
-from f1rl.agents.tactical import load_tactical_config, section_battle, use_defender
+from f1rl.agents.tactical import (
+    load_tactical_config,
+    section_battle,
+    use_attacker,
+    use_defender,
+)
+from f1rl.config import OPPONENT_KINDS
 from f1rl.envs.racetrack import TUM_HELD_OUT, TUM_TRAIN, TUM_VALIDATION
 from f1rl.scenarios import make_env
 from f1rl.sections import KINDS, env_sections
@@ -33,6 +45,10 @@ def main() -> None:
     ap.add_argument(
         "--defender", default="", help="trained defender model for rival_ahead* cars"
     )
+    ap.add_argument(
+        "--attacker", default="", help="main-driver model for rival_behind cars"
+    )
+    ap.add_argument("--wear", type=float, default=0.0, help="our wear, defending")
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument(
         "--set", nargs="*", default=[], help="env overrides, e.g. pull_moves=true"
@@ -58,9 +74,14 @@ def main() -> None:
         env = make_env(name, params, "random")
         if args.defender:
             use_defender([env], args.defender, ("line", "cover", "inside"))
+        if args.attacker:
+            use_attacker([env], args.attacker)
         for sec in env_sections(env, config.section_params()):
             for opp in opponents:
-                r = section_battle(env, policy, sec, opp, args.gap)
+                behind = OPPONENT_KINDS[opp][1] == "behind"
+                if behind and sec.kind not in config.run.section_defend_kinds:
+                    continue
+                r = section_battle(env, policy, sec, opp, args.gap, args.wear)
                 rows.append({**sec.as_dict(), "opponent": opp, **r})
         done = [r for r in rows if r["track"] == name]
         print(

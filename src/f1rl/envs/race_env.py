@@ -144,6 +144,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         self._swaps = 0  # every change of order, stuck or not
         self._section_m: float | None = None  # a section battle's length
         self._section_done = self._section_won = False
+        self._defending = False  # the battle started with the other car behind
         self._contact = False
         self._grip = 1.0
         self._plan_grip = 1.0
@@ -404,6 +405,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         section = opts.get("section_m")
         self._section_m = None if section is None else float(section)
         self._section_done = self._section_won = False
+        self._defending = False  # the battle started with the other car behind
         self._push, self._wear = 1.0, 0.0
         if p.tires:
             random_start = self.mode == "random"
@@ -512,6 +514,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             side = float(self.np_random.choice([-1.0, 1.0]))
             self._opp = place(kind, driver, self._state.s_m + sign * gap, side, p.guard)
             self._ahead = self._held = where == "behind"
+            self._defending = where == "behind"
             if p.safety_filter:
                 self._opp.state = self._recoverable(self._opp.state, sign * gap)
             if self._section_m is not None and sign > 0:
@@ -704,6 +707,8 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             tail = self._section_m + p.pass_hold_m + p.section_tail_m
             if self._section_done and (self._passes >= 1 or progress >= tail):
                 section_over = True
+            if self._passes <= -1:  # a defence lost: passed, and it stuck
+                section_over = True
         truncated = not terminated and (self._steps >= budget or section_over)
         info.update(self._info(off_track=off_track, lap_completed=lap_completed))
         info["advanced_m"] = self._state.s_m - start_s
@@ -774,6 +779,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             "lap_completed": lap_completed,
             "section_done": self._section_done,
             "section_won": self._section_won,
+            "defending": self._defending,
         }
 
     def _observation(self) -> ObsType:

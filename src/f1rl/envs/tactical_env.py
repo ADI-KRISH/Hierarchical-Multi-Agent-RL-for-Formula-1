@@ -119,6 +119,9 @@ class TacticalEnv(RaceEnv):
         """A car's offset (m, left +) from the racing line at its own position."""
         return float(state.n_m - self._driver().base.line_state(state.s_m)[0])
 
+    def _line_n(self, s_m: float) -> float:
+        return float(self._driver().base.line_state(s_m)[0])
+
     def _record_offsets(self) -> None:
         if self._opp is None:
             return

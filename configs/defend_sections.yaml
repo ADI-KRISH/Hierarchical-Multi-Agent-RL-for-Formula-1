@@ -82,6 +82,7 @@ env:
   plan_features: true
   opponent_braking_fraction: 0.95
   opponent_accel_fraction: 0.95
+  chop_line_relative: true   # a chop = a step off our line toward it, not the line's sweep
   side_own_fault: true   # a squeeze by the other car is not our dirty move
   path_edge_inset_m: 0.6
   track_limit_margin_m: 0.5

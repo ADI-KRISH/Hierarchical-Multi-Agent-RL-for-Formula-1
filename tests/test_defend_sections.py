@@ -113,3 +113,13 @@ def test_training_mix_draws_defences() -> None:
         _, info = multi.reset()
         assert info["defending"]
         assert env._opp is not None and env._opp.kind == "rival_tactician"
+
+
+def test_driving_the_racing_line_ahead_is_never_a_chop() -> None:
+    env = _env()
+    assert env.params.chop_line_relative
+    assert env._line_n(100.0) == env._driver().base.line_state(100.0)[0]
+    for sec in [s for s in env_sections(env) if s.kind in ("straight", "braking")]:
+        for kind in ("rival_tactician", "attacker"):
+            r = section_battle(env, "line", sec, kind, 6.5)
+            assert r["dirty_chop"] == 0, (sec.name, kind)

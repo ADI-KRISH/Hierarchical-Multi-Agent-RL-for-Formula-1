@@ -847,6 +847,11 @@ class StrategyParams:
     push_wear_ratio: float = 3.0
     # Rivals' car pace: each rival's grip is ours times 1 + U(-spread, +spread).
     car_pace_spread: float = 0.015
+    # Our car's grip against the field (1.0 = an equal car; 1.03 = 3% more grip,
+    # the fastest car). A scenario setting, not a measured figure.
+    our_pace: float = 1.0
+    # Our grid slot (1 = pole); 0 = drawn at random each race.
+    grid_slot: int = 0
     # Rivals' strategies: "mixed" = random templates (`RIVAL_TEMPLATES`), "baseline"
     # = every rival runs the rule-based plan (`StrategyBaselineParams`), its stops
     # moved by up to +/- rival_stop_jitter of the race so they do not all pit at once.

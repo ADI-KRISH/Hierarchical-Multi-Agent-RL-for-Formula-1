@@ -380,6 +380,8 @@ class StrategyEnv(gym.Env[Obs, Any]):
             "stops": me.stops,
             "legal": legal(me),
             "rain": self.weather.wet,
+            "track_passes": getattr(self, "track_passes", 0),
+            "track_passed": getattr(self, "track_passed", 0),
             **(self.battle_moves() if self.lap >= self.total_laps else {}),
         }
 
@@ -424,11 +426,13 @@ class StrategyEnv(gym.Env[Obs, Any]):
             self.weather = race_weather(wp, rng, self.total_laps, rain)
         else:
             self.weather = dry_weather(self.total_laps)
-        paces = [1.0] + [
+        paces = [p.our_pace] + [
             float(1.0 + rng.uniform(-p.car_pace_spread, p.car_pace_spread))
             for _ in range(p.n_cars - 1)
         ]
         grid = [int(g) for g in rng.permutation(p.n_cars)]
+        if "grid" not in opts and p.grid_slot:
+            opts = {**opts, "grid": p.grid_slot}
         if "grid" in opts:
             # Our grid slot (1 = pole); the rivals keep their drawn order.
             want = int(opts["grid"]) - 1
@@ -455,6 +459,9 @@ class StrategyEnv(gym.Env[Obs, Any]):
         # Running order at the start of every lap (index = lap), stop laps per car.
         self.orders = [list(self.order)]
         self.stop_laps = [[] for _ in range(p.n_cars)]
+        # Places won and lost on track (neither car pitting that lap).
+        self.track_passes = 0
+        self.track_passed = 0
         return self._obs(), self._info()
 
     def step(self, action: Any) -> tuple[Obs, float, bool, bool, dict[str, Any]]:
@@ -516,6 +523,15 @@ class StrategyEnv(gym.Env[Obs, Any]):
             our_defend=self.profile.defend if self.profile else None,
         )
         wetness = self.weather.at(self.lap)
+        old = self.orders[-1]
+        if not pitted[0]:
+            for rival in range(1, n):
+                if pitted[rival]:
+                    continue
+                was = old.index(0) < old.index(rival)
+                now = self.order.index(0) < self.order.index(rival)
+                self.track_passes += int(now and not was)
+                self.track_passed += int(was and not now)
         self.cars = [replace(c, time_s=e) for c, e in zip(new_cars, end, strict=True)]
         self.last_lap_s = end[0] - start_s[0]
         self.lap += 1

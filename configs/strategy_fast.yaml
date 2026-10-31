@@ -1,0 +1,67 @@
+# FASTEST CAR FROM P10 (2026-10-31): as strategy_win.yaml, but our car has 3%
+# more grip than the field (~2 s a lap) and always starts 10th. Our driver's
+# measured overtaking needs a big pace edge to pass, so the race is won by
+# combining on-track passes with the pit calls. 3% is a scenario setting.
+#
+# STRATEGY agent RACING TO WIN against BASELINE DRIVERS (2026-10-30): every rival
+# runs the rule-based plan (medium -> hard at ~45%, stops jittered +/- 5% of the
+# race) in an equal car; our car is the measured Driver Agent (defend_v2 profile).
+# Reward adds a win bonus and a heavier finishing-place term; the checkpoint with
+# the most validation wins is kept. Inputs include tyre delta, tyre life left,
+# pit window per compound, compounds used and laps remaining.
+#
+# STRATEGY agent ON OUR DRIVER: as strategy_ppo.yaml, but lap times and the odds of
+# passing / being passed come from the trained Driver Agent, measured in the full
+# sim (scripts/measure_driver.py -> configs/driver_profiles/defend_v2.json).
+# Original notes for the stand-in run follow.
+#
+# STRATEGY agent: PPO picks, once a lap, whether to pit (and for which compound)
+# and a push level for the driver, over a whole Grand Prix against rivals running
+# rule-based strategies. The driver is a STAND-IN (lap-time table on each track's
+# optimal line), not the trained Driver Agent: compounds, pit loss, car spread and
+# overtaking odds are uncalibrated design choices (config.StrategyParams).
+# Checkpoint chosen by mean finishing place on the validation tracks.
+strategy: true
+
+run:
+  name: strategy_fast
+  seed: 0
+  total_timesteps: 2000000    # laps, summed over all envs (~60 laps a race)
+  n_envs: 8
+  eval_every_steps: 50000
+  eval_races: 30
+  train_tracks: train
+  eval_tracks: validation
+  driver_profile: configs/driver_profiles/defend_v2.json
+  subproc: true
+  select_by: wins
+
+env:
+  n_cars: 10
+  pit_loss_s: 22.0
+  rivals: baseline
+  rival_stop_jitter: 0.05
+  car_pace_spread: 0.0
+  our_pace: 1.03
+  grid_slot: 10
+  reward:
+    time_weight: 0.1
+    position_weight: 1.0
+    finish_weight: 1.0
+    rule_penalty: 50.0
+    win_bonus: 20.0
+
+baseline:
+  stints: [medium, hard]
+  stop_fractions: [0.45]
+  push_index: 2
+  max_wear: 0.8
+
+ppo:
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 256
+  n_epochs: 10
+  gamma: 0.995
+  gae_lambda: 0.95
+  ent_coef: 0.01

@@ -211,7 +211,14 @@ def compare(
             "podiums": float(np.mean([r["position"] <= 3 for r in results])),
             **{
                 k: float(np.mean([r[k] for r in results]))
-                for k in ("undercuts", "overcuts", "undercut_on_us", "overcut_on_us")
+                for k in (
+                    "undercuts",
+                    "overcuts",
+                    "undercut_on_us",
+                    "overcut_on_us",
+                    "track_passes",
+                    "track_passed",
+                )
             },
             "rain_races": float(np.mean([r["rain"] for r in results])),
         }

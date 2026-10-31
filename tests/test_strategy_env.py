@@ -184,3 +184,15 @@ def test_tyre_inputs(tracks: dict[str, RaceTrackInfo]) -> None:
     assert env._tyre_lap(me, "soft", 0.0) < env._tyre_lap(me, "hard", 0.0)
     assert env._tyre_lap(me, "medium", 0.6) > env._tyre_lap(me, "medium", 0.0)
     assert env._tyre_gap(None) == 0.0
+
+
+def test_fastest_car_from_the_back_passes_on_track(
+    tracks: dict[str, RaceTrackInfo],
+) -> None:
+    p = replace(PARAMS, our_pace=1.06, grid_slot=PARAMS.n_cars, car_pace_spread=0.0)
+    env = StrategyEnv(tracks, p)
+    _, info = env.reset(seed=0, options={"laps": LAPS})
+    assert info["position"] == PARAMS.n_cars
+    res = race(env, baseline_policy, seed=0, track="oval")
+    assert res["track_passes"] > 0
+    assert res["position"] < PARAMS.n_cars

@@ -30,7 +30,7 @@
 strategy: true
 
 run:
-  name: strategy_fast_skill
+  name: strategy_fast_overtake
   seed: 0
   total_timesteps: 2000000    # laps, summed over all envs (~60 laps a race)
   n_envs: 8

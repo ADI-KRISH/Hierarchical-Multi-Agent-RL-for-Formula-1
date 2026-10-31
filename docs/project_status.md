@@ -174,6 +174,7 @@ Details: `docs/strategy_agent_design.md`, "What is built".
 - [x] PPO trainer (`configs/strategy_ppo.yaml`) and paired comparison CLI.
 - [x] Measure our driver's lap table and pass/defend rates; plug them in; full training (held-out: place 6.03 vs 6.80 for the rule-based plan; `docs/strategy_agent_design.md`).
 - [x] Race to win vs baseline drivers (`configs/strategy_win.yaml`, 38 inputs incl. tyre delta, pit window, tyre life, laps left): held-out wins 72% vs 10%, podiums 95% vs 33%.
+- [x] Rain: intermediates, wets, shower + forecast (`configs/strategy_rain.yaml`): held-out wet races wins 68% vs 0% for the rule-based plan, place 2.38 vs 5.70.
 - [ ] Rivals that react (cover an undercut) and a cold-tyre out-lap, so early stops are not free.
 - [ ] Calibrate compounds and pit loss from FastF1 stints (laptop).
 - [ ] Send the push level to the driver's observation.

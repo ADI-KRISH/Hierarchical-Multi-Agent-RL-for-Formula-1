@@ -865,6 +865,38 @@ which makes an early stop cheaper than it is; (3) with equal cars and a driver t
 needs ~5 s/lap more pace to pass, a race lost at the start or in traffic cannot be
 won back on track. Compounds and pit loss are still uncalibrated.
 
+**Rain (2026-10-31, `configs/strategy_rain.yaml`).** User ask: the strategist must
+learn when to pit in the rain. Added (`src/f1rl/models/weather.py`, all values
+uncalibrated design choices in `WeatherParams`):
+
+- A shower per wet race (60% of training races): track wetness 0..1 rises toward the
+  shower's strength while it rains and dries 0.06 a lap after.
+- Intermediates and full wets. Grip vs wetness: slicks lose 60% when soaked,
+  intermediates best around 45% wetness, wets best when soaked; crossovers near 30%
+  (slick/inter) and 70% (inter/wet). Wet tyres wear up to 4x faster on a drying track.
+- FIA tyre rule: running a wet-weather tyre waives the two-dry-compound requirement.
+- Rivals and the rule-based plan switch by thresholds on the wetness seen last lap
+  (inters > 30%, wets > 70%, slicks < 25%, each team +/- 5%).
+- 11 more inputs: wetness, raining, forecast 3 and 6 laps ahead (noisy), our wet
+  tyre, lap gain of fresh inters / wets, rivals on wet tyres, wet tyre used, overheating.
+
+3M laps on the laptop (~35 min). Held-out, 40 paired races each:
+
+| | wins | podiums | place |
+|---|---|---|---|
+| rain races, rule-based plan | 0% | 17% | 5.70 |
+| **rain races, strategy agent** | **68%** | **85%** | **2.38** |
+| dry races, rule-based plan | 10% | 17% | 6.15 |
+| dry races, rain-trained agent | 25% | 80% | 2.98 |
+
+In the rain it stops on average about a lap before the rivals (it reads the forecast;
+they react to the last lap), goes to intermediates and mostly skips full wets, then
+back to slicks once the track dries. Its usual plans: M-I-M, M-H-I-M, M-I-H. In dry
+races it wins less than the dry-only agent (25% vs 72%), so for now use
+`strategy_win` in the dry and `strategy_rain` when rain is possible. On-track
+passes stay rare (0.15 places a race gained on laps with no stops): that is the
+driver's overtaking, worked on separately.
+
 **Plugging in the real driver later.** Two hooks: (1) replace each track's
 `LapTable` with one measured from the trained driver (lap time at each grip level
 and fuel load); (2) set `attack_skill_s` / `defend_skill_s` (or refit

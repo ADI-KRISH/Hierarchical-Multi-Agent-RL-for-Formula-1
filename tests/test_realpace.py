@@ -105,3 +105,24 @@ def test_race_like_opponents_are_between_slow_and_equal() -> None:
     for kind in ("guard_close", "close", "mid"):
         grip, where = OPPONENT_KINDS[kind]
         assert slow < grip < equal and where == "ahead"
+
+
+def test_lane_commit_runs_a_lane_move_until_the_attack_ends() -> None:
+    from f1rl.agents.tactics import LANE_MOVES
+
+    runs = []
+    for commit in (False, True):
+        env = _env(lane_moves=True, lane_commit=commit, safety_filter=True)
+        env.reset(seed=0, options={"opponent": "equal", "gap_m": 12.0})
+        assert env._opp is not None  # same speed: it stays within reach
+        env._state = replace(env._state, speed_ms=env._opp.state.speed_ms)
+        t0 = env._steps
+        env.step(env.moves.index(LANE_MOVES[0]))
+        runs.append(env._steps - t0)
+    one = runs[0]
+    assert runs[1] > one  # several decisions' worth in one step
+    env = _env(lane_moves=True, lane_commit=True)
+    env.reset(seed=0, options={"opponent": "equal", "gap_m": 12.0})
+    assert env._lane_goes_on()
+    env.params = replace(env.params, lane_commit_gap_m=5.0)
+    assert not env._lane_goes_on()  # dropped too far back: given up

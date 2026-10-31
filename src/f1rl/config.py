@@ -457,6 +457,14 @@ class RaceEnvParams:
     # and never finished one, and a low-entropy one never tried another.
     commit_moves: bool = False
     commit_max_decisions: int = 24
+    # A lane move (`lane_moves`) chosen while attacking runs on as ONE step of the
+    # agent (re-aimed at the other car every decision, up to `commit_max_decisions`)
+    # until the other car is cleared or we drop `lane_commit_gap_m` behind it. The
+    # agent picks when, which side and how late to brake; the pass is then one
+    # decision to learn instead of ~10-20 identical ones in a row (a single "line"
+    # among them gives the attack up). False = earlier runs.
+    lane_commit: bool = False
+    lane_commit_gap_m: float = 30.0
     # Tactical env: the moves the agent may pick (its action space, in this order).
     # Empty = all of `agents.tactics.MOVES`. A defender uses ("line", "cover",
     # "inside"). The observation still shows the running move out of all MOVES.

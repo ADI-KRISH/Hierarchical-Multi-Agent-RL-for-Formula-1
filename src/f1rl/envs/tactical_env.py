@@ -224,6 +224,31 @@ class TacticalEnv(RaceEnv):
         self._maneuver = Maneuver(me.s_m, ((0.0, here), (CHOP_LOOK_M, here)))
         self.chop_holds += 1
 
+    def _lane_goes_on(self) -> bool:
+        """`RaceEnvParams.lane_commit`: a lane move keeps running while the attack
+        is on -- the other car not yet cleared (a car length plus `clean_chop_m` in
+        front of its nose) and not dropped more than `lane_commit_gap_m` behind."""
+        p, opp = self.params, self._opp
+        if opp is None:
+            return False
+        gap = wrap_gap(opp.state.s_m - self._state.s_m, self._lap_m)  # > 0: ahead
+        cleared = -gap > 2 * p.car_length_m + p.clean_chop_m
+        return not cleared and gap < p.lane_commit_gap_m
+
+    def _reaim_lane(self) -> None:
+        """Re-aim the running lane move at where the other car is now, as a fresh
+        choice of the same move would -- only while it is still ahead: once our
+        nose is in front the line is held (and `_no_chop` keeps it clean)."""
+        opp = self._opp
+        assert opp is not None
+        d = self._driver()
+        s = self._state.s_m
+        if wrap_gap(opp.state.s_m - s, self._lap_m) <= 0:
+            return
+        shift = self._state.n_m - d.base.line_state(s)[0]
+        threat = opp.state.n_m - d.base.line_state(opp.state.s_m)[0]
+        self._maneuver = make_move(self._move, d, s, shift, threat_shift=threat)
+
     def _may_change(self, corners: list[Any], want: str = "line") -> bool:
         """Free to start a new move: not in a braking zone, none in progress; with
         `RaceEnvParams.defend_rules`, no cover or inside across a close car's nose."""
@@ -387,13 +412,19 @@ class TacticalEnv(RaceEnv):
         info: dict[str, Any] = {}
         p = self.params
         chunks = 1
-        if p.commit_moves and self._move != "line":
+        lane_run = p.lane_commit and self._move in LANE_MOVES
+        if (p.commit_moves and self._move != "line") or lane_run:
             chunks = p.commit_max_decisions
         for chunk in range(chunks):
             if chunk > 0:
-                m = self._maneuver
-                if m is None or self._state.s_m > m.end_s:
-                    break  # the move is done: the agent decides again
+                if lane_run:
+                    if not self._lane_goes_on():
+                        break  # pass done or given up: the agent decides again
+                    self._reaim_lane()
+                else:
+                    m = self._maneuver
+                    if m is None or self._state.s_m > m.end_s:
+                        break  # the move is done: the agent decides again
                 self._rival_move()
             total, terminated, truncated, info = self._drive(
                 total, terminated, truncated, info

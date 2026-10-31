@@ -31,7 +31,9 @@ def try_plan(
     env.reset(seed=0, options=section_options(sec, opp, gap))
     info: dict[str, Any] = {}
     for k in range(2000):
-        a = move if k == wait else 0
+        # Held from the wait on: choosing "line" next would replace the move
+        # (moves are re-chosen every decision unless `commit_moves`).
+        a = move if k >= wait else 0
         _, _, term, trunc, info = env.step(a)
         if term or trunc:
             break

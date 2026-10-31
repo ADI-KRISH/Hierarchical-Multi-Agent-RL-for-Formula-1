@@ -7,6 +7,8 @@
 #   dirty_air_traction false   the wake costs cornering/braking grip, not thrust
 #   tow_while_alongside true   DRS stays open until the pass is done
 #   safety_leader_keeps_pace   the car ahead is not throttled for a car behind
+# and lane_commit: a lane move chosen while attacking runs on (one decision) until
+# the pass is done or given up, so a pass is one choice to learn, not 10-20.
 # Battles: 3 corners from the start of a straight or braking zone, against cars
 # 0.4-2 s/lap slower (mostly the close ones); 30% defences as in run 2 so the
 # driver keeps defending. Starts from the defend run 2 driver. No reward change.
@@ -90,6 +92,7 @@ env:
   track_limit_margin_m: 0.5
   commit_moves: false
   lane_moves: true
+  lane_commit: true   # a lane move runs on until the pass is done or given up
   safety_lift_first: true
   safety_leader_keeps_pace: true   # a car ahead is not slowed for one behind
   path_saturated_brake: 0.6

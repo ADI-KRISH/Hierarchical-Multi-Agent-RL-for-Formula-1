@@ -1,5 +1,6 @@
 # FASTEST CAR FROM P10, WITH A BETTER OVERTAKER (target for the driver thread):
-# as strategy_fast.yaml, but our driver's measured attack curve gets 3.4 s of
+# as strategy_fast.yaml, but only 0.5% more grip (~0.4 s/lap; with 3% the
+# rule-based plan already won every race) and our driver's attack curve gets 3.4 s of
 # extra pace advantage, so a pass becomes a coin flip at a 1.5 s/lap edge instead
 # of 4.9 s/lap. A "what if the driver overtakes well" scenario, not a measurement.
 #
@@ -47,7 +48,7 @@ env:
   rivals: baseline
   rival_stop_jitter: 0.05
   car_pace_spread: 0.0
-  our_pace: 1.03
+  our_pace: 1.005
   grid_slot: 10
   attack_skill_s: 3.4
   reward:

@@ -379,6 +379,12 @@ class RaceEnvParams:
     # figure: it is what makes following close in corners cost something.
     dirty_air_m: float = 25.0
     dirty_air_loss: float = 0.04
+    # Does the wake also cut full-throttle acceleration? True = earlier runs. The
+    # wake costs downforce, which limits cornering and braking; on a straight the
+    # car behind gains (less drag in the tow), it does not lose traction. With
+    # True, a car within `dirty_air_m` on a straight accelerates `dirty_air_loss`
+    # worse than the car it follows and can hardly close up in the tow.
+    dirty_air_traction: bool = True
     # Overtake assist (DRS plus slipstream): on a straight (centreline curvature under
     # `tow_max_curvature`), a car within `tow_m` behind another gets `tow_boost_ms` of
     # extra top speed whatever its sideways position. 6 m/s (~20 km/h) is the scale of
@@ -388,6 +394,12 @@ class RaceEnvParams:
     tow_m: float = 80.0
     tow_max_curvature: float = 0.002
     tow_boost_ms: float = 6.0
+    # The assist also while the cars overlap, until the car behind is a car length
+    # past: DRS (part of the assist) stays open until the driver brakes, so the
+    # attacker can complete the pass down the straight. False = earlier runs: the
+    # assist ended with the noses overlapping and the cars ran side by side at the
+    # same top speed into the braking zone (checked 2026-10-31, Monza T1).
+    tow_while_alongside: bool = False
     # The base driver plans its speeds for the wake from this far behind a car.
     wake_anticipation_m: float = 75.0
     # Slipstream as extra ACCELERATION, not just top speed: the point-mass car has no
@@ -583,6 +595,9 @@ class RaceEnvParams:
     # lined up 9 m behind on a curving straight was held back every few steps
     # (checked 2026-10-29, Hockenheim T6).
     safety_edge_overlap_only: bool = False
+    # ...and never slows a car ahead for a car closing on it from behind
+    # (`SafetyCheck.leader_keeps_pace`). False = earlier runs.
+    safety_leader_keeps_pace: bool = False
     # Real starts (`f1rl.real_starts`): a gap given in seconds is turned into metres
     # at the racing line's speed where the scenario starts, then kept in this range
     # (a car length plus a little, up to where the tactician starts an attack).
@@ -656,6 +671,14 @@ OPPONENT_KINDS: Final = {
     "guard_slow": (0.80, "ahead"),
     "guard_mid": (0.88, "ahead"),
     "guard_equal": (0.95, "ahead"),
+    # Race-like pace gaps (2026-10-31). A planned-grip share is not a lap-time gap:
+    # measured in clean air over all 25 tracks against our car at push 1 on new
+    # tyres, 0.80 ("slow") is ~2.0 s/lap slower, 0.88 ~0.8 s, 0.91 ~0.4 s and 0.95
+    # ~0.1 s quicker. Real passes happen at ~0.5-1 s/lap, so these are the
+    # battles the driver must win: a guard and a line-holder at ~0.4 s/lap.
+    "guard_close": (0.91, "ahead"),
+    "close": (0.91, "ahead"),
+    "mid": (0.88, "ahead"),
     "attacker": (0.97, "behind"),  # a touch quicker; tries to pass the car
     "attacker_equal": (0.95, "behind"),  # same pace; tries to pass the car
     # Self-play: the same pace as the learner (`FollowerParams.grip_fraction`), its

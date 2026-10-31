@@ -170,6 +170,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             brake=p.safety_brake,
             lift_first=p.safety_lift_first,
             edge_overlap_only=p.safety_edge_overlap_only,
+            leader_keeps_pace=p.safety_leader_keeps_pace,
         )
         self._tow_now = 0.0
         if p.opponents:
@@ -286,7 +287,10 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             abs(self._kappa_at(rear.s_m + d)) < p.tow_max_curvature
             for d in (0.0, 50.0, 100.0)
         )
-        return p.tow_boost_ms if p.car_length_m < gap <= p.tow_m and straight else 0.0
+        # DRS stays open until the driver brakes: with `tow_while_alongside` the
+        # assist lasts until the car is a car length past (not only while behind).
+        nearest = -p.car_length_m if p.tow_while_alongside else p.car_length_m
+        return p.tow_boost_ms if nearest < gap <= p.tow_m and straight else 0.0
 
     def _drag(self, in_tow: bool) -> float:
         """`CarParams.drag_per_m` for a car (see `RaceEnvParams.aero_drag`)."""
@@ -303,8 +307,12 @@ class RaceEnv(gym.Env[ObsType, ActType]):
         # The base driver plans for the wake from further out (a braking zone is no
         # place to find out); the car feels it only inside `dirty_air_m`.
         self._plan_grip = g * self._dirty_air(p.wake_anticipation_m)
+        tyre = g
         g *= self._dirty_air(p.dirty_air_m)
         self._grip = g
+        # The wake costs downforce (cornering and braking grip), not engine thrust:
+        # with `dirty_air_traction` off, full throttle keeps the tyres' grip only.
+        traction = g if p.dirty_air_traction else tyre
         self._tow_now = self._tow(self._state, self._opp.state) if self._opp else 0.0
         self._car_now = replace(
             self.car,
@@ -312,7 +320,7 @@ class RaceEnv(gym.Env[ObsType, ActType]):
             max_speed_ms=self.car.max_speed_ms + self._tow_now,
             max_lateral_g=self.car.max_lateral_g * g,
             max_accel_g=self.car.max_accel_g
-            * g
+            * traction
             * (1.0 + (p.tow_accel_gain if self._tow_now > 0 else 0.0)),
             max_braking_g=self.car.max_braking_g * g,
         )

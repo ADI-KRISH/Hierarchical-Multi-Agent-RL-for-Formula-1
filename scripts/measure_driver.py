@@ -16,8 +16,12 @@ Per track, in the full sim with the safety filter on:
 3. **Defend.** The same with our car ahead and ``--defend-opponents`` behind
    (``rival_behind`` = a frozen main driver, ``--attacker``).
 
-Each battle's pace advantage is the lap-time difference of the two cars at their
-grip on this track (our measured gap for both). Logistic fits of the outcomes give
+Each battle's pace advantage is the lap-time difference of the two cars on this
+track: ours from step 1 at the battle's wear, the other car's measured the same way
+(a flying lap alone in clean air, `opponent_lap_s`). Earlier profiles
+(``--opp-pace grip``) put the other car's planned grip share into our own pace
+curve instead, which made the scripted cars look ~2-3x slower than they are (0.80
+grip: ~2 s/lap, not ~5). Logistic fits of the outcomes give
 the attack and defend odds the race sim uses. Tracks run in parallel processes.
 """
 
@@ -72,6 +76,41 @@ def _run(env: Any, policy: Any, options: dict[str, Any]) -> dict[str, Any]:
         if term or trunc:
             break
     return dict(info)
+
+
+def opponent_lap_s(env: Any, kind: str) -> float | None:
+    """The scripted car ``kind``'s flying lap (s) alone on this track: it starts half
+    a lap from our car (far out of the wake and the tow), and its time from 300 m
+    to a lap past that is interpolated between decisions."""
+    lap_m = float(env._lap_m)
+    env.reset(
+        seed=0,
+        options={
+            "start_s": 0.0,
+            "opponent": kind,
+            "gap_m": lap_m / 2,
+            "section_m": 3 * lap_m,
+            "push": 1.0,
+            "wear": 0.0,
+            "start_speed_frac": 1.0,
+        },
+    )
+    prev, done, t_prev = env._opp.state.s_m, 0.0, 0.0
+    marks: list[float] = []
+    for _ in range(20_000):
+        _, _, term, trunc, info = env.step(0)
+        t = float(info["elapsed_s"])
+        step = (env._opp.state.s_m - prev) % lap_m
+        prev = env._opp.state.s_m
+        for mark in (300.0, lap_m + 300.0)[len(marks) :]:
+            if step > 0 and done < mark <= done + step:
+                marks.append(t_prev + (t - t_prev) * (mark - done) / step)
+        done, t_prev = done + step, t
+        if len(marks) == 2:
+            return marks[1] - marks[0]
+        if term or trunc:
+            break
+    return None
 
 
 def measure_track(job: tuple[argparse.Namespace, str]) -> dict[str, Any]:
@@ -132,6 +171,10 @@ def _measure(args: argparse.Namespace, name: str) -> dict[str, Any]:
     pick_n = min(args.starts, len(straights))
     starts = [straights[i * len(straights) // pick_n] for i in range(pick_n)]
     lap_m = float(np.sum(line.ds))
+    opp_laps: dict[str, float | None] = {}
+    if args.opp_pace == "measured":
+        for kind in (*args.attack_opponents, *args.defend_opponents):
+            opp_laps[kind] = opponent_lap_s(battle_env, kind)
     battles = []
     for role, kinds in (
         ("attack", args.attack_opponents),
@@ -156,7 +199,9 @@ def _measure(args: argparse.Namespace, name: str) -> dict[str, Any]:
                             "start_speed_frac": 1.0,
                         },
                     )
-                    me, them = lap_time(my_grip), lap_time(opp_grip)
+                    me = lap_time(my_grip)
+                    measured = opp_laps.get(kind)
+                    them = lap_time(opp_grip) if measured is None else measured
                     ahead = bool(info["section_won"])
                     if role == "attack":
                         advantage = them - me
@@ -184,6 +229,8 @@ def _measure(args: argparse.Namespace, name: str) -> dict[str, Any]:
         "grips": grips.tolist(),
         "gaps": gaps.tolist(),
         "battles": battles,
+        "opponent_laps": opp_laps,
+        "my_lap_new": lap_time(top * tire_grip(tire, 0.0)),
     }
 
 
@@ -210,6 +257,12 @@ def main() -> None:
     ap.add_argument(
         "--defend-opponents",
         default="rival_tactician,rival_tactician_fast,attacker,rival_behind",
+    )
+    ap.add_argument(
+        "--opp-pace",
+        choices=("measured", "grip"),
+        default="measured",
+        help="the other car's lap: measured alone (default) or our curve at its grip",
     )
     ap.add_argument("--procs", type=int, default=8)
     ap.add_argument("--out", type=Path, required=True)
@@ -279,6 +332,7 @@ def main() -> None:
             "starts": args.starts,
             "gap_m": args.gap,
             "lap_frac": args.lap_frac,
+            "opp_pace": args.opp_pace,
             "attack_opponents": args.attack_opponents,
             "defend_opponents": args.defend_opponents,
             "failed_tracks": [r["track"] for r in results if "error" in r],

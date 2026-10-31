@@ -28,12 +28,13 @@ import yaml
 
 from f1rl.agents.strategy_baseline import FixedPlan
 from f1rl.config import (
-    COMPOUNDS,
     EXAMPLE_CAR,
+    TYRES,
     CompoundParams,
     StrategyBaselineParams,
     StrategyParams,
     StrategyRewardParams,
+    WeatherParams,
 )
 from f1rl.driver_profile import DriverProfile, load_profile, save_profile
 from f1rl.envs.racetrack import TUM_HELD_OUT, TUM_TRAIN, TUM_VALIDATION
@@ -76,9 +77,15 @@ class StrategyConfig:
 
     def strategy_params(self, tracks: tuple[str, ...] = ()) -> StrategyParams:
         raw = dict(self.env)
-        for name in COMPOUNDS:
+        for name in TYRES:
             if name in raw:
                 raw[name] = CompoundParams(**raw[name])
+        if "weather" in raw:
+            w = dict(raw["weather"])
+            for key in ("start_range", "length_range", "intensity_range"):
+                if key in w:
+                    w[key] = tuple(w[key])
+            raw["weather"] = WeatherParams(**w)
         if "reward" in raw:
             raw["reward"] = StrategyRewardParams(**raw["reward"])
         for key in ("push_levels",):
@@ -125,11 +132,19 @@ def baseline_policy(env: StrategyEnv, obs: Any) -> Any:
     """Our car runs the rule-based plan (`StrategyEnv.baseline`)."""
     plan = FixedPlan(env.baseline)
     if env.lap == 0:
-        return np.array(
-            [COMPOUNDS.index(plan.start_compound) + 1, plan.params.push_index]
-        )
-    lap = plan.plan(env.params, env.cars[0], env.lap, env.total_laps)
-    pit = 0 if lap.pit_to is None else COMPOUNDS.index(lap.pit_to) + 1
+        start = plan.start_compound
+        if env.params.wet_tyres and env.seen_wetness() > 0.0:
+            start = (
+                plan.plan(
+                    env.params, env.cars[0], 0, env.total_laps, env.seen_wetness()
+                ).pit_to
+                or start
+            )
+        return np.array([env.tyres.index(start) + 1, plan.params.push_index])
+    lap = plan.plan(
+        env.params, env.cars[0], env.lap, env.total_laps, env.seen_wetness()
+    )
+    pit = 0 if lap.pit_to is None else env.tyres.index(lap.pit_to) + 1
     return np.array([pit, plan.params.push_index])
 
 
@@ -138,7 +153,7 @@ def random_policy(seed: int) -> Policy:
 
     def act(env: StrategyEnv, obs: Any) -> Any:
         # Mostly stay out: a uniform pit choice would stop three laps in four.
-        pit = int(rng.integers(1, 4)) if rng.random() < 0.05 else 0
+        pit = int(rng.integers(1, len(env.tyres) + 1)) if rng.random() < 0.05 else 0
         return np.array([pit, int(rng.integers(len(env.params.push_levels)))])
 
     return act
@@ -151,9 +166,19 @@ def model_policy(model: Any) -> Policy:
     return act
 
 
-def race(env: StrategyEnv, policy: Policy, seed: int, track: str) -> dict[str, Any]:
-    """One race; returns the final info plus the lap-by-lap history."""
-    obs, info = env.reset(seed=seed, options={"track": track})
+def race(
+    env: StrategyEnv,
+    policy: Policy,
+    seed: int,
+    track: str,
+    rain: bool | None = None,
+) -> dict[str, Any]:
+    """One race; returns the final info plus the lap-by-lap history. ``rain``
+    forces a wet (True) or dry (False) race when the env has wet tyres."""
+    opts: dict[str, Any] = {"track": track}
+    if rain is not None:
+        opts["rain"] = rain
+    obs, info = env.reset(seed=seed, options=opts)
     done = False
     while not done:
         obs, _, done, _, info = env.step(policy(env, obs))
@@ -166,13 +191,16 @@ def compare(
     tracks: tuple[str, ...],
     races: int,
     seed: int,
+    rain: bool | None = None,
 ) -> dict[str, dict[str, float]]:
     """Paired races (same seed and track for every policy): mean finishing place,
-    mean race time, share of legal (two-compound) races and mean stops."""
+    mean race time, share of legal (two-compound) races and mean stops. ``rain``
+    forces every race wet or dry (wet-tyre envs only)."""
     out: dict[str, dict[str, float]] = {}
     for name, policy in policies.items():
         results = [
-            race(env, policy, seed + i, tracks[i % len(tracks)]) for i in range(races)
+            race(env, policy, seed + i, tracks[i % len(tracks)], rain)
+            for i in range(races)
         ]
         out[name] = {
             "position": float(np.mean([r["position"] for r in results])),
@@ -185,7 +213,12 @@ def compare(
                 k: float(np.mean([r[k] for r in results]))
                 for k in ("undercuts", "overcuts", "undercut_on_us", "overcut_on_us")
             },
+            "rain_races": float(np.mean([r["rain"] for r in results])),
         }
+        wet = [r for r in results if r["rain"]]
+        if wet:
+            out[name]["rain_wins"] = float(np.mean([r["position"] == 1 for r in wet]))
+            out[name]["rain_position"] = float(np.mean([r["position"] for r in wet]))
     return out
 
 

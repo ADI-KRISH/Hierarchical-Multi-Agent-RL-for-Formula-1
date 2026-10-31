@@ -15,8 +15,8 @@ from dataclasses import dataclass, replace
 import numpy as np
 
 from f1rl.config import (
-    COMPOUNDS,
     RACE_MIN_DISTANCE_M,
+    TYRES,
     CarParams,
     StrategyParams,
     TireParams,
@@ -24,6 +24,7 @@ from f1rl.config import (
 from f1rl.driver_profile import PassCurve
 from f1rl.models.raceline import gg_lap_time_s
 from f1rl.models.tire import tire_grip, tire_wear_step
+from f1rl.models.weather import wet_grip, wet_wear
 
 Array = np.typing.NDArray[np.float64]
 
@@ -139,15 +140,17 @@ def car_lap(
     plan: LapPlan,
     burn_kg: float,
     dirty_air: bool,
+    wetness: float = 0.0,
 ) -> tuple[float, CarState]:
     """A car's free lap (no traffic): (lap time incl. any stop, state after it).
 
     A stop is made at the start of the lap (the pit lane crosses the line): the new
-    tyres run this lap and ``pit_loss_s`` is added to it.
+    tyres run this lap and ``pit_loss_s`` is added to it. ``wetness`` (0 dry .. 1
+    soaked) scales each tyre's grip and wear (`f1rl.models.weather`).
     """
     pit = plan.pit_to is not None
     if plan.pit_to is not None:
-        if plan.pit_to not in COMPOUNDS:
+        if plan.pit_to not in TYRES:
             raise KeyError(f"unknown compound {plan.pit_to!r}")
         car = replace(
             car,
@@ -160,10 +163,12 @@ def car_lap(
     comp = params.compound(car.compound)
     planned = push_grip_fraction(params, plan.push)
     grip = planned * comp.grip * tire_grip(tire, car.wear) * car.pace
+    grip *= wet_grip(params.weather, car.compound, wetness)
     if dirty_air:
         grip *= 1.0 - params.dirty_air_loss
     lap = table.lap_time_s(grip, car.fuel_kg)
     life = comp.life_s / params.push_wear_ratio ** (plan.push - 0.5)
+    life /= wet_wear(params.weather, car.compound, wetness)
     wear = tire_wear_step(replace(tire, life_s=life), car.wear, 1.0, lap)
     after = replace(
         car,

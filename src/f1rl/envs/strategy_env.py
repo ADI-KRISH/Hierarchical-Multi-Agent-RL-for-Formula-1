@@ -6,9 +6,10 @@ lap, whether to pit and for which compound, and a push level for the driver. The
 driver itself is a stand-in: a lap-time table from the track's optimal line
 (`models.race.LapTable`), until the trained Driver Agent can replace it.
 
-Action (MultiDiscrete [4, len(push_levels)]):
-  0: 0 = stay out, 1/2/3 = pit for soft/medium/hard. On the first decision (on
-     the grid) it picks the starting set at no cost; 0 = start on mediums.
+Action (MultiDiscrete [4, len(push_levels)], or [6, ...] with ``wet_tyres``):
+  0: 0 = stay out, 1/2/3 = pit for soft/medium/hard, 4/5 = intermediate/wet. On
+     the first decision (on the grid) it picks the starting set at no cost; 0 =
+     start on mediums.
   1: push level index (0 = conserve .. last = attack).
 
 Reward (`StrategyRewardParams`): minus seconds lost per lap against a reference
@@ -16,6 +17,7 @@ lap, plus places gained, and at the flag a penalty per place behind the winner
 and a disqualification penalty for running only one compound.
 """
 
+import dataclasses
 import hashlib
 import json
 from dataclasses import dataclass, replace
@@ -33,6 +35,8 @@ from f1rl.agents.strategy_baseline import (
 )
 from f1rl.config import (
     COMPOUNDS,
+    TYRES,
+    WET_COMPOUNDS,
     CarParams,
     StrategyBaselineParams,
     StrategyParams,
@@ -50,6 +54,14 @@ from f1rl.models.race import (
     resolve_lap,
 )
 from f1rl.models.tire import tire_grip
+from f1rl.models.weather import (
+    RaceWeather,
+    dry_weather,
+    race_weather,
+    tyre_class,
+    wet_grip,
+    wet_wear,
+)
 
 Obs = np.typing.NDArray[np.float32]
 
@@ -58,6 +70,8 @@ GAP_SCALE_S = 30.0
 #: Two stops this many laps apart or fewer can make an undercut or overcut.
 UNDERCUT_WINDOW_LAPS = 5
 OBS_SIZE = 38
+#: Extra inputs with ``wet_tyres``: the weather, forecast and wet-tyre state.
+WEATHER_OBS_SIZE = 11
 
 
 @dataclass(frozen=True, eq=False)
@@ -136,6 +150,12 @@ def load_race_track(
     return RaceTrackInfo(name, length, table)
 
 
+def legal(car: CarState) -> bool:
+    """Tyre-use rule: two dry compounds, unless a wet-weather tyre was used."""
+    used = car.compounds_used
+    return len(used & set(COMPOUNDS)) >= 2 or bool(used & set(WET_COMPOUNDS))
+
+
 class StrategyEnv(gym.Env[Obs, Any]):
     """One Grand Prix for our car against rule-based rivals; a step is a lap."""
 
@@ -159,8 +179,13 @@ class StrategyEnv(gym.Env[Obs, Any]):
         self.baseline = baseline or StrategyBaselineParams()
         # Our driver's measured race-craft (None: the field's odds, `StrategyParams`).
         self.profile = profile
-        self.action_space = spaces.MultiDiscrete([4, len(params.push_levels)])
-        self.observation_space = spaces.Box(-1.0, 1.0, (OBS_SIZE,), np.float32)
+        self.tyres = TYRES if params.wet_tyres else COMPOUNDS
+        self.action_space = spaces.MultiDiscrete(
+            [len(self.tyres) + 1, len(params.push_levels)]
+        )
+        size = OBS_SIZE + (WEATHER_OBS_SIZE if params.wet_tyres else 0)
+        self.observation_space = spaces.Box(-1.0, 1.0, (size,), np.float32)
+        self.weather: RaceWeather = dry_weather(1)
         self.track = next(iter(tracks.values()))
         self.total_laps = self.track.laps
         self.lap = 0
@@ -220,7 +245,7 @@ class StrategyEnv(gym.Env[Obs, Any]):
             float(np.clip((self.cars[behind].stops - me.stops) / 2, -1, 1))
             if behind is not None
             else 0.0,
-            COMPOUNDS.index(self.cars[ahead].compound) / 2
+            min(1.0, TYRES.index(self.cars[ahead].compound) / 2)
             if ahead is not None
             else 0.0,
             # Tyre delta: s/lap a fresh set of each compound would gain now, and
@@ -242,13 +267,43 @@ class StrategyEnv(gym.Env[Obs, Any]):
             # Compounds run so far (the rule needs two).
             *[1.0 if c in me.compounds_used else 0.0 for c in COMPOUNDS],
         ]
+        if p.wet_tyres:
+            obs += self._weather_obs()
         return np.clip(np.array(obs, dtype=np.float32), -1.0, 1.0)
 
+    def seen_wetness(self) -> float:
+        """The track as the pit wall saw it on the last lap (the grid at lap 0)."""
+        return self.weather.at(self.lap - 1 if self.lap > 0 else 0)
+
+    def _weather_obs(self) -> list[float]:
+        p, w = self.params, self.weather
+        me = self.cars[0]
+        now = self.seen_wetness()
+        mine = self._tyre_lap(me, me.compound, me.wear)
+        rivals = [self.cars[c] for c in range(1, p.n_cars)]
+        return [
+            now,
+            1.0 if w.raining[min(max(self.lap - 1, 0), len(w.raining) - 1)] else 0.0,
+            w.forecast(p.weather, max(self.lap - 1, 0), 3),
+            w.forecast(p.weather, max(self.lap - 1, 0), 6),
+            *[1.0 if me.compound == c else 0.0 for c in WET_COMPOUNDS],
+            # Seconds a lap a fresh set of inters / wets would gain right now.
+            *[
+                float(np.clip((mine - self._tyre_lap(me, c, 0.0)) / 10.0, -1, 1))
+                for c in WET_COMPOUNDS
+            ],
+            sum(tyre_class(c.compound) != "slick" for c in rivals) / len(rivals),
+            1.0 if me.compounds_used & set(WET_COMPOUNDS) else 0.0,
+            min(1.0, me.wear * wet_wear(p.weather, me.compound, now) / 4.0),
+        ]
+
     def _tyre_lap(self, car: CarState, compound: str, wear: float) -> float:
-        """A car's lap time (s) at normal push on ``compound`` worn ``wear``."""
+        """A car's lap time (s) at normal push on ``compound`` worn ``wear``, on
+        the track as last seen."""
         p = self.params
         normal = push_grip_fraction(p, p.push_levels[self.baseline.push_index])
         grip = normal * p.compound(compound).grip * tire_grip(self.tire, wear)
+        grip *= wet_grip(p.weather, compound, self.seen_wetness())
         return self.track.table.lap_time_s(grip * car.pace, car.fuel_kg)
 
     def _tyre_gap(self, other: int | None) -> float:
@@ -323,7 +378,8 @@ class StrategyEnv(gym.Env[Obs, Any]):
             "compound": me.compound,
             "wear": me.wear,
             "stops": me.stops,
-            "legal": len(me.compounds_used) >= 2,
+            "legal": legal(me),
+            "rain": self.weather.wet,
             **(self.battle_moves() if self.lap >= self.total_laps else {}),
         }
 
@@ -355,6 +411,19 @@ class StrategyEnv(gym.Env[Obs, Any]):
         else:
             raise ValueError(f"unknown rivals {p.rivals!r}: mixed or baseline")
         self.plans = [FixedPlan(self.baseline), *rivals]
+        if p.wet_tyres:
+            wp = p.weather
+            self.plans = [self.plans[0]] + [
+                dataclasses.replace(
+                    plan,
+                    rain_offset=float(rng.uniform(-wp.rival_jitter, wp.rival_jitter)),
+                )
+                for plan in self.plans[1:]
+            ]
+            rain = bool(opts.get("rain", rng.random() < wp.rain_chance))
+            self.weather = race_weather(wp, rng, self.total_laps, rain)
+        else:
+            self.weather = dry_weather(self.total_laps)
         paces = [1.0] + [
             float(1.0 + rng.uniform(-p.car_pace_spread, p.car_pace_spread))
             for _ in range(p.n_cars - 1)
@@ -394,14 +463,14 @@ class StrategyEnv(gym.Env[Obs, Any]):
         burn = p.start_fuel_kg / self.total_laps
         if self.lap == 0:
             # On the grid: the tyre choice is the starting set, free of charge.
-            start = COMPOUNDS[pit_choice - 1] if pit_choice else "medium"
+            start = self.tyres[pit_choice - 1] if pit_choice else "medium"
             self.cars[0] = replace(
                 self.cars[0], compound=start, compounds_used=frozenset({start})
             )
             pit_choice = 0
         ours = LapPlan(
             push=p.push_levels[push_index],
-            pit_to=COMPOUNDS[pit_choice - 1] if pit_choice else None,
+            pit_to=self.tyres[pit_choice - 1] if pit_choice else None,
         )
         n = p.n_cars
         start_s = [c.time_s for c in self.cars]
@@ -412,14 +481,23 @@ class StrategyEnv(gym.Env[Obs, Any]):
             plan = (
                 ours
                 if c == 0
-                else self.plans[c].plan(p, self.cars[c], self.lap, self.total_laps)
+                else self.plans[c].plan(
+                    p, self.cars[c], self.lap, self.total_laps, self.seen_wetness()
+                )
             )
             dirty = pos > 0 and (
                 self.cars[c].time_s - self.cars[self.order[pos - 1]].time_s
                 < p.dirty_air_gap_s
             )
             laps[c], new_cars[c] = car_lap(
-                p, self.tire, self.track.table, self.cars[c], plan, burn, dirty
+                p,
+                self.tire,
+                self.track.table,
+                self.cars[c],
+                plan,
+                burn,
+                dirty,
+                self.weather.at(self.lap),
             )
             pitted[c] = plan.pit_to is not None
             if pitted[c]:
@@ -437,6 +515,7 @@ class StrategyEnv(gym.Env[Obs, Any]):
             our_attack=self.profile.attack if self.profile else None,
             our_defend=self.profile.defend if self.profile else None,
         )
+        wetness = self.weather.at(self.lap)
         self.cars = [replace(c, time_s=e) for c, e in zip(new_cars, end, strict=True)]
         self.last_lap_s = end[0] - start_s[0]
         self.lap += 1
@@ -461,6 +540,7 @@ class StrategyEnv(gym.Env[Obs, Any]):
                 "compound": self.cars[0].compound,
                 "wear": self.cars[0].wear,
                 "pit": ours.pit_to,
+                "wetness": wetness,
                 "push": ours.push,
             }
         )

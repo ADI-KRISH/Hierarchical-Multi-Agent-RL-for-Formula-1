@@ -719,6 +719,13 @@ MAX_RACE_FUEL_KG: Final = 110.0
 #: least two of them (FIA Formula One Sporting Regulations, tyre-use rule).
 COMPOUNDS: Final = ("soft", "medium", "hard")
 
+#: Wet-weather tyres. A driver who runs either of them in a race no longer has to
+#: use two dry compounds (FIA Formula One Sporting Regulations, tyre-use rule).
+WET_COMPOUNDS: Final = ("intermediate", "wet")
+
+#: Every tyre a car can fit: the pit choices of a wet-weather race.
+TYRES: Final = COMPOUNDS + WET_COMPOUNDS
+
 
 @dataclass(frozen=True)
 class CompoundParams:
@@ -733,6 +740,53 @@ class CompoundParams:
     # Seconds of driving at push 0.5 that wear a new tyre out (wear 0 -> 1); see
     # `StrategyParams.push_wear_ratio`. Grip against wear follows `TireParams`.
     life_s: float
+
+
+@dataclass(frozen=True)
+class WeatherParams:
+    """Rain in `StrategyEnv` (`f1rl.models.weather`). **Uncalibrated design
+    choices**, not measured F1 figures: set so slicks are quickest on a dry track,
+    intermediates from about 30% wetness and full wets from about 70%, and a
+    shower forms and dries over a handful of laps. Calibrate against FastF1 wet
+    races (lap times by compound vs track state) before reading results as F1.
+    """
+
+    # Share of races with a shower (only when `StrategyParams.wet_tyres`).
+    rain_chance: float = 0.0
+    # Shower start and length as shares of the race, and its strength (the
+    # wetness the track tends to while it rains), each drawn uniformly.
+    start_range: tuple[float, float] = (0.1, 0.7)
+    length_range: tuple[float, float] = (0.1, 0.4)
+    intensity_range: tuple[float, float] = (0.35, 1.0)
+    # While raining the track closes this share of the gap to the shower's
+    # strength each lap; once it stops it dries this much (0..1) a lap.
+    wet_rate: float = 0.35
+    dry_rate: float = 0.06
+    # Forecast error: the forecast wetness 3 laps ahead has this standard
+    # deviation, growing in proportion to the horizon.
+    forecast_sd: float = 0.08
+    # Grip against wetness w (0 dry .. 1 soaked), times the compound's grip:
+    #   slicks: 1 - slick_loss * w
+    #   intermediates: inter_peak - inter_slope * |w - inter_best|
+    #   wets: wet_peak - wet_slope * (1 - w)
+    slick_loss: float = 0.6
+    inter_peak: float = 0.88
+    inter_best: float = 0.45
+    inter_slope: float = 0.35
+    wet_peak: float = 0.82
+    wet_slope: float = 0.1
+    # Wet-weather tyres overheat on a drying track: wear runs up to this many
+    # times faster as wetness falls from overheat_below to 0.
+    overheat_wear: float = 4.0
+    inter_overheat_below: float = 0.3
+    wet_overheat_below: float = 0.6
+    # Rule-based tyre calls (rivals and the baseline): fit intermediates above
+    # to_inter, wets above to_wet, slicks again below to_slick (wetness seen on
+    # the last lap). Each rival's thresholds move by up to +/- rival_jitter.
+    to_inter: float = 0.3
+    to_wet: float = 0.7
+    to_slick: float = 0.25
+    rival_jitter: float = 0.05
 
 
 @dataclass(frozen=True)
@@ -763,6 +817,13 @@ class StrategyParams:
     soft: CompoundParams = CompoundParams(grip=1.0, life_s=1900.0)
     medium: CompoundParams = CompoundParams(grip=0.985, life_s=3000.0)
     hard: CompoundParams = CompoundParams(grip=0.97, life_s=4500.0)
+    # Wet-weather tyres: grip comes from `WeatherParams` (1.0 here = as there).
+    intermediate: CompoundParams = CompoundParams(grip=1.0, life_s=3000.0)
+    wet: CompoundParams = CompoundParams(grip=1.0, life_s=3500.0)
+    # Rain: when True the action adds intermediates and wets, the observation adds
+    # the weather and forecast, and `weather.rain_chance` of races get a shower.
+    wet_tyres: bool = False
+    weather: WeatherParams = WeatherParams()
     # Time a pit stop adds to the lap it is made on (s): pit lane at the speed limit
     # plus the stop. Uncalibrated; FastF1 pit-in/pit-out times can calibrate it.
     pit_loss_s: float = 22.0
@@ -820,8 +881,8 @@ class StrategyParams:
     reward: StrategyRewardParams = StrategyRewardParams()
 
     def compound(self, name: str) -> CompoundParams:
-        if name not in COMPOUNDS:
-            raise KeyError(f"unknown compound {name!r}; known: {COMPOUNDS}")
+        if name not in TYRES:
+            raise KeyError(f"unknown compound {name!r}; known: {TYRES}")
         params: CompoundParams = getattr(self, name)
         return params
 

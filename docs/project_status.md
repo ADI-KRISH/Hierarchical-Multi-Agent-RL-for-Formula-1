@@ -175,6 +175,7 @@ Details: `docs/strategy_agent_design.md`, "What is built".
 - [x] Measure our driver's lap table and pass/defend rates; plug them in; full training (held-out: place 6.03 vs 6.80 for the rule-based plan; `docs/strategy_agent_design.md`).
 - [x] Race to win vs baseline drivers (`configs/strategy_win.yaml`, 38 inputs incl. tyre delta, pit window, tyre life, laps left): held-out wins 72% vs 10%, podiums 95% vs 33%.
 - [x] Rain: intermediates, wets, shower + forecast (`configs/strategy_rain.yaml`): held-out wet races wins 68% vs 0% for the rule-based plan, place 2.38 vs 5.70.
+- [x] Fastest car from P10 (`configs/strategy_fast.yaml`, `strategy_fast_skill.yaml`): held-out wins 88% vs 30%; with a better overtaker 45% vs 15% and 11 on-track passes a race.
 - [ ] Rivals that react (cover an undercut) and a cold-tyre out-lap, so early stops are not free.
 - [ ] Calibrate compounds and pit loss from FastF1 stints (laptop).
 - [ ] Send the push level to the driver's observation.

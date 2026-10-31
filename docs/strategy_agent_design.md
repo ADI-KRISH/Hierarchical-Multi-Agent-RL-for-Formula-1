@@ -897,6 +897,27 @@ races it wins less than the dry-only agent (25% vs 72%), so for now use
 passes stay rare (0.15 places a race gained on laps with no stops): that is the
 driver's overtaking, worked on separately.
 
+**Fastest car from P10 (2026-10-31).** User ask: our car is the quickest, starts
+10th, and must win with on-track passes plus pit calls. `StrategyParams.our_pace`
+(our grip vs the field) and `grid_slot`; `StrategyEnv` counts places won and lost
+on track (laps where neither car pitted). Held-out, 40 races each:
+
+| scenario | strategy | wins | podiums | place | on-track passes / race |
+|---|---|---|---|---|---|
+| 3% faster, measured driver (`strategy_fast.yaml`) | rule-based | 30% | 45% | 4.0 | 4.3 |
+| | **agent** | **88%** | **100%** | **1.15** | 1.1 |
+| 0.5% faster, better overtaker (`strategy_fast_skill.yaml`) | rule-based | 15% | 78% | 2.7 | 7.8 |
+| | **agent** | **45%** | 72% | 2.7 | **11.4** |
+
+With today's measured overtaking the agent avoids traffic: it pits for softs on
+laps 2-4, runs in clean air, stops again at 35-40% and jumps the field when it pits.
+With a better overtaker (`attack_skill_s 3.4`: a pass is a coin flip at a 1.5 s/lap
+edge, the target for the driver thread) it races through the field instead: M-S-H,
+stops at ~35% and ~60%, more passes and three times the rule-based win rate, but the
+same average place (it takes more risk). A 3% car with that overtaker was too easy:
+both strategies won every race. The driver thread reports the measured attack
+curve was mis-measured and fixes sim bugs; re-measure the driver after that.
+
 **Plugging in the real driver later.** Two hooks: (1) replace each track's
 `LapTable` with one measured from the trained driver (lap time at each grip level
 and fuel load); (2) set `attack_skill_s` / `defend_skill_s` (or refit

@@ -5,14 +5,15 @@
 # "wins in every category". Reward: minus race time (0.1 per second, so the
 # fastest way to the flag) plus +20 for a win; the two-compound rule -50.
 # Reward before (strategy_fast_win): win +10 only. Incident and SC / VSC numbers
-# are scenario settings, not F1 data.
+# are scenario settings, not F1 data. min_stint_laps 5: a first try without it
+# stopped on two or three SC laps in a row (cheap stops, the queue closes up).
 #
 strategy: true
 
 run:
   name: strategy_all
   seed: 0
-  total_timesteps: 3000000    # laps, summed over all envs (~60 laps a race)
+  total_timesteps: 2000000    # laps, summed over all envs (~60 laps a race)
   n_envs: 4
   eval_every_steps: 50000
   eval_races: 30
@@ -26,6 +27,7 @@ run:
 env:
   n_cars: 10
   pit_loss_s: 22.0
+  min_stint_laps: 5
   rivals: baseline
   rival_stop_jitter: 0.05
   car_pace_spread: 0.0

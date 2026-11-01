@@ -883,6 +883,10 @@ class StrategyParams:
     # Time a pit stop adds to the lap it is made on (s): pit lane at the speed limit
     # plus the stop. Uncalibrated; FastF1 pit-in/pit-out times can calibrate it.
     pit_loss_s: float = 22.0
+    # Our car ignores a call to pit when its tyres are newer than this many laps
+    # (a stop to fix a puncture always happens). Stops a lap or two apart are not
+    # a strategy a team would run; 0 = no limit. A design choice.
+    min_stint_laps: int = 0
     # Fuel at the start (kg), burnt evenly so the car finishes empty.
     start_fuel_kg: float = MAX_RACE_FUEL_KG
     # Stand-in driver: lap time = limit lap on the optimal line at the driver's

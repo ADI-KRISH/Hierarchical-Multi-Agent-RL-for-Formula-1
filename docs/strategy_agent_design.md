@@ -961,6 +961,35 @@ After a late spin it pits next lap for fresh mediums and attacks; after an early
 one it keeps medium-hard and adds a late stop for mediums. A puncture (time lost +
 a stop = 40-50 s) cannot be won back with a 0.3 s/lap edge.
 
+**Win in every case (2026-11-01, `strategy_all.yaml`, `strategy_all_dominant.yaml`).**
+User ask: decide like "the fastest way to finish the race", fewer stops when
+behind, handle safety cars and VSCs, win in every case. Added `NeutralParams`
+(SC / VSC periods: same slow lap for everyone, no passing, stops cost 12 s / 14 s
+instead of 22 s, SC closes gaps; the rule-based cars bring a near stop forward) and
+`StrategyParams.min_stint_laps` (no new stop within 5 laps of the last; a first
+agent stopped on 2-3 SC laps in a row). One agent per car, trained on a mix: 40%
+races with a spin or puncture, 30% SC, 20% VSC. Reward: -0.1 per second of race
+time (the fastest way to the flag) + 20 for a win (+ two-compound rule). Held-out,
+200 races per case, wins (agent / rule-based):
+
+| case | 1% faster car (0.3 s/lap) | 3% faster car (0.9 s/lap) |
+|---|---|---|
+| clean | **96%** / 91% | 100% / 100% |
+| spin | **29%** / 4.5% | **99.5%** / 98% |
+| puncture | 0% / 0% | **56%** / 44% |
+| safety car | **94.5%** / 89.5% | 99.5% / 100% |
+| VSC | 88.5% / 89% | 100% / 100% |
+
+Fewer stops after an incident is not faster in this tyre model: in the earlier
+recovery runs the extra stop was 3-6 s quicker to the flag than staying out. With a
+time reward the agent now adds a stop only when it pays (1.06 stops after a spin
+vs 2.0 for the earlier recovery agent). A puncture costs 15-30 s plus a stop; a
+0.3 s/lap edge cannot win that back, so winning every case needs a faster car (at
+5% the rule-based plan wins ~97% after punctures). The 1% agent shown is the run
+trained without `min_stint_laps`, evaluated with it on (it scored a little better
+than the run trained with it: SC 94.5% vs 86%). SC / VSC and incident numbers are
+scenario values, not F1 data.
+
 **Racing line and driver modes on the replay page.** The replay page draws each
 held-out track's edges and the minimum-curvature racing line coloured by limit
 speed (`models.raceline.optimal_line`), runs a lap on it in real time, and puts

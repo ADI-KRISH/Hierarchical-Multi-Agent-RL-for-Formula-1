@@ -92,3 +92,16 @@ def test_cheap_stop_and_rule_takes_it() -> None:
     assert plan.plan(PARAMS, car, 35, 100).pit_to is None
     assert plan.plan(PARAMS, car, 35, 100, neutral=True).pit_to == "hard"
     assert plan.plan(PARAMS, car, 20, 100, neutral=True).pit_to is None
+
+
+def test_min_stint_blocks_back_to_back_stops(tracks: dict[str, RaceTrackInfo]) -> None:
+    env = StrategyEnv(tracks, replace(PARAMS, min_stint_laps=5))
+    env.reset(seed=0, options={"laps": LAPS, "neutral": "none"})
+    env.step(np.array([2, 2]))  # grid: mediums
+    for _ in range(4):
+        env.step(np.array([3, 2]))  # ask for hards every lap
+    assert env.cars[0].stops == 1  # only the first call was taken
+    for _ in range(4):
+        env.step(np.array([0, 2]))
+    env.step(np.array([1, 2]))  # 5 laps on that set: allowed again
+    assert env.cars[0].stops == 2

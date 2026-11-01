@@ -617,6 +617,13 @@ class StrategyEnv(gym.Env[Obs, Any]):
             )
             pit_choice = 0
         pit_to = self.tyres[pit_choice - 1] if pit_choice else None
+        if (
+            pit_to is not None
+            and not self.must_pit
+            and self.cars[0].stops > 0
+            and self.cars[0].tyre_laps < p.min_stint_laps
+        ):
+            pit_to = None  # a new set is not changed again this soon
         if self.must_pit and pit_to is None:
             pit_to = p.incidents.forced_compound
         self.must_pit = False

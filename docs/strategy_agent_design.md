@@ -1004,5 +1004,51 @@ and fuel load); (2) set `attack_skill_s` / `defend_skill_s` (or refit
 Then re-run the comparison; a strategy trained on the stand-in should be
 fine-tuned on the real driver's numbers.
 
-**Not built yet:** ERS, fuel-saving mode, safety car / VSC, weather, lapped
-traffic and blue flags, sending the push level to the driver's observation.
+**One agent for every case (`configs/strategy_master.yaml`, 2026-11-01).** 1%
+faster car (0.3 s/lap), always from P10, the stand-in good overtaker (skill 3.4).
+Trained 4M laps on a mix of: clean races, a spin or puncture (35%), rain (25%),
+SC (30%, 2-6 laps, up to two periods), VSC (15%), red flag (5%), with restarts
+where a car with overtake mode charged passes more easily. New since `strategy_all`:
+
+- **No early stops by choice** (`min_stop_fraction` 0.25): refused unless a
+  safety car / VSC / red flag makes the stop cheap, the tyres are past 70% wear
+  (`early_stop_wear`), the weather calls for another tyre type, or after a spin.
+  `min_stint_laps` 5 as before.
+- **Sanity rules** (`late_stop_laps` 4, `wet_tyre_min_wetness` 0.05): no stop by
+  choice in the last 4 laps (a replay showed a stop 2 laps from the flag while P2),
+  and no intermediates / wets on a dry track (one showed full wets under a red flag
+  in a dry race).
+- **Red flag**: every car, ours too, gets a free tyre change (before, only rivals did).
+- **Rivals' pace** (`pace_obs`): last lap of the cars ahead and behind, the leader
+  and the field, against ours.
+- **Overtake mode** (`ErsParams`, a third action): spend battery for -0.15 s on the
+  lap and a better chance to pass or hold position. Battery and gains are design
+  values, not F1 data.
+- Reward: -0.1 per second of race time + 30 for a win (+ two-compound rule).
+
+Held-out tracks, 200 races per case (seeds 70000-70199, track = seed index mod 5),
+`model_best.zip` (best on validation wins), sanity rules on. Files:
+`runs/strategy_master/eval_guard/*.json` (copies in
+`/mnt/project-files/strategy_models/strategy_master/`).
+
+| case | agent wins | rule-based wins | agent avg finish | rule-based avg finish |
+|---|---|---|---|---|
+| clean | **100%** | 99% | 1.00 | 1.01 |
+| spin | **38.5%** | 13% | **3.42** | 5.24 |
+| puncture | **5.5%** | 0.5% | **8.06** | 9.70 |
+| safety car | **95.5%** | 93.5% | 1.16 | 1.08 |
+| two safety cars | **94.5%** | 93% | 1.14 | 1.15 |
+| VSC | 91% | **96%** | 1.45 | 1.04 |
+| red flag | **98%** | 97.5% | 1.08 | 1.02 |
+| rain | **89.5%** | 66.5% | **1.58** | 2.56 |
+
+Suzuka in the rain alone (100 races from P10, seeds 80000-80099): 87% wins vs 63%,
+and never finishes behind its grid slot. Not every case is won: after a puncture
+(15-30 s plus a stop) a 0.3 s/lap edge cannot win back the time, and on the VSC the
+agent often takes the cheaper stop and then loses time passing cars on track. The
+final checkpoint (`model_final.zip`) is better after a spin (48%) but worse in the
+other cases. Incident, SC / VSC / red-flag and overtake-mode numbers are scenario
+values, not F1 data.
+
+**Not built yet:** fuel-saving mode, lapped traffic and blue flags, sending the push
+level and overtake mode to the driver's observation.

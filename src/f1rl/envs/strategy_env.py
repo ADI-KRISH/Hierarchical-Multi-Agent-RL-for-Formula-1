@@ -711,6 +711,21 @@ class StrategyEnv(gym.Env[Obs, Any]):
             and self.cars[0].tyre_laps < p.min_stint_laps
         ):
             pit_to = None  # a new set is not changed again this soon
+        if (
+            pit_to is not None
+            and not self.must_pit
+            and neutral is None
+            and self.lap >= self.total_laps - p.late_stop_laps
+        ):
+            pit_to = None  # too late for a stop to pay
+        if (
+            pit_to is not None
+            and tyre_class(pit_to) != "slick"
+            and self.weather.at(self.lap) < p.wet_tyre_min_wetness
+            and not self.weather.raining[min(self.lap, len(self.weather.raining) - 1)]
+        ):
+            # No wet tyres on a dry track: stay out, or the forced set when damaged.
+            pit_to = p.incidents.forced_compound if self.must_pit else None
         if self.must_pit and pit_to is None:
             pit_to = p.incidents.forced_compound
         if neutral == "red" and pit_to is None:

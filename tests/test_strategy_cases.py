@@ -88,3 +88,22 @@ def test_two_safety_cars_and_red_flag(tracks: dict[str, RaceTrackInfo]) -> None:
         obs, _, done, _, _ = env.step(baseline_policy(env, obs))
     # Every car, ours too, changed tyres for free on the red-flag lap.
     assert all(red in env.stop_laps[c] for c in range(env.params.n_cars))
+
+
+def test_no_late_stop_and_no_wets_on_dry(tracks: dict[str, RaceTrackInfo]) -> None:
+    env = StrategyEnv(tracks, replace(PARAMS, late_stop_laps=3))
+    env.reset(seed=0, options={"laps": LAPS})
+    env.step(np.array([2, 2]))
+    while env.lap < LAPS - 3:
+        env.step(np.array([0, 2]))
+    for _ in range(3):
+        env.step(np.array([3, 2]))  # the last 3 laps: refused
+    assert env.cars[0].stops == 0
+    wet = replace(PARAMS, wet_tyres=True, wet_tyre_min_wetness=0.05)
+    env = StrategyEnv(tracks, wet)
+    env.reset(seed=0, options={"laps": LAPS, "rain": False})
+    env.step(np.array([2, 2]))
+    env.step(np.array([env.tyres.index("wet") + 1, 2]))
+    assert env.cars[0].stops == 0 and env.cars[0].compound != "wet"
+    env.step(np.array([env.tyres.index("hard") + 1, 2]))
+    assert env.cars[0].stops == 1

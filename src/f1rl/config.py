@@ -918,6 +918,13 @@ class StrategyParams:
     # the weather calls for another tyre type, or after damage.
     min_stop_fraction: float = 0.0
     early_stop_wear: float = 0.7
+    # No stop by choice in the last this many laps (0 = allowed): 22 s is never won
+    # back in a lap or two. A forced stop, or one under a safety car / VSC / red
+    # flag, still happens. A design choice.
+    late_stop_laps: int = 0
+    # Refuse intermediates / full wets on a dry track (wetness below this and not
+    # raining); 0 = allowed. A design choice.
+    wet_tyre_min_wetness: float = 0.0
     # Observation adds the rivals' pace (last lap of the cars ahead and behind, the
     # leader and the field, against ours): `PACE_OBS_SIZE` inputs.
     pace_obs: bool = False

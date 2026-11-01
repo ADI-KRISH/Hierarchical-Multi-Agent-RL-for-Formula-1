@@ -34,6 +34,8 @@ env:
   min_stint_laps: 5
   min_stop_fraction: 0.25
   early_stop_wear: 0.7
+  late_stop_laps: 4
+  wet_tyre_min_wetness: 0.05
   pace_obs: true
   rivals: baseline
   rival_stop_jitter: 0.05

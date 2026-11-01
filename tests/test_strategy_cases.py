@@ -86,5 +86,5 @@ def test_two_safety_cars_and_red_flag(tracks: dict[str, RaceTrackInfo]) -> None:
     done = False
     while not done:
         obs, _, done, _, _ = env.step(baseline_policy(env, obs))
-    # Every rival changed tyres for free on the red-flag lap.
-    assert all(red in env.stop_laps[c] for c in range(1, env.params.n_cars))
+    # Every car, ours too, changed tyres for free on the red-flag lap.
+    assert all(red in env.stop_laps[c] for c in range(env.params.n_cars))

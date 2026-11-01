@@ -31,6 +31,7 @@ from f1rl.config import (
     EXAMPLE_CAR,
     TYRES,
     CompoundParams,
+    ErsParams,
     NeutralParams,
     StrategyBaselineParams,
     StrategyIncidentParams,
@@ -41,6 +42,7 @@ from f1rl.config import (
 from f1rl.driver_profile import DriverProfile, load_profile, save_profile
 from f1rl.envs.racetrack import TUM_HELD_OUT, TUM_TRAIN, TUM_VALIDATION
 from f1rl.envs.strategy_env import StrategyEnv, load_race_track
+from f1rl.models.weather import tyre_class
 
 Policy = Callable[[StrategyEnv, Any], Any]
 
@@ -93,6 +95,8 @@ class StrategyConfig:
                 if key in w:
                     w[key] = tuple(w[key])
             raw["weather"] = WeatherParams(**w)
+        if "ers" in raw:
+            raw["ers"] = ErsParams(**raw["ers"])
         if "neutral" in raw:
             neu = dict(raw["neutral"])
             for key in ("lap_range", "sc_laps", "vsc_laps"):
@@ -159,7 +163,14 @@ def baseline_policy(env: StrategyEnv, obs: Any) -> Any:
                 ).pit_to
                 or start
             )
-        return np.array([env.tyres.index(start) + 1, plan.params.push_index])
+        return with_ers(env, [env.tyres.index(start) + 1, plan.params.push_index])
+    if env.neutral_now() == "red":
+        # Red flag: a free set. The next planned compound, or a fresh one of these.
+        stint = env.cars[0].stops
+        nxt = plan.params.stints[min(stint + 1, len(plan.params.stints) - 1)]
+        if env.params.wet_tyres and tyre_class(env.cars[0].compound) != "slick":
+            nxt = env.cars[0].compound
+        return with_ers(env, [env.tyres.index(nxt) + 1, plan.params.push_index])
     lap = plan.plan(
         env.params,
         env.cars[0],
@@ -169,7 +180,17 @@ def baseline_policy(env: StrategyEnv, obs: Any) -> Any:
         env.neutral_now() is not None,
     )
     pit = 0 if lap.pit_to is None else env.tyres.index(lap.pit_to) + 1
-    return np.array([pit, plan.params.push_index])
+    return with_ers(env, [pit, plan.params.push_index])
+
+
+def with_ers(env: StrategyEnv, action: list[int]) -> Any:
+    """Add the rule-based overtake-mode call when the env has one: use it when the
+    car ahead is within a second and the battery holds a full use."""
+    if not env.params.ers.enabled:
+        return np.array(action)
+    pos = env.order.index(0)
+    near = pos > 0 and env.cars[0].time_s - env.cars[env.order[pos - 1]].time_s < 1.0
+    return np.array([*action, int(near and env.battery >= env.params.ers.cost)])
 
 
 def random_policy(seed: int) -> Policy:
@@ -178,7 +199,8 @@ def random_policy(seed: int) -> Policy:
     def act(env: StrategyEnv, obs: Any) -> Any:
         # Mostly stay out: a uniform pit choice would stop three laps in four.
         pit = int(rng.integers(1, len(env.tyres) + 1)) if rng.random() < 0.05 else 0
-        return np.array([pit, int(rng.integers(len(env.params.push_levels)))])
+        push = int(rng.integers(len(env.params.push_levels)))
+        return with_ers(env, [pit, push])
 
     return act
 

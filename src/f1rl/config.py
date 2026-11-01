@@ -843,6 +843,32 @@ class NeutralParams:
     # Rule-based cars (rivals, our baseline) take a cheap stop under SC / VSC when
     # their planned stop is at most this share of the race away.
     rival_window: float = 0.15
+    # More cases: up to max_periods SC / VSC periods a race (a later one comes with
+    # second_chance), and red_chance of a red flag (one lap: every car may change
+    # tyres for free, the field lines up). Green-flag restart after an SC or red
+    # flag: every attacker gets restart_attack_s of extra pass advantage that lap
+    # (cold tyres, a bunched field).
+    max_periods: int = 1
+    second_chance: float = 0.0
+    red_chance: float = 0.0
+    restart_attack_s: float = 0.0
+
+
+@dataclass(frozen=True)
+class ErsParams:
+    """Overtake mode (the hybrid battery) the Strategy Agent can call for our car.
+    Design values, uncalibrated: no F1 figure."""
+
+    enabled: bool = False
+    # On a lap with overtake mode: lap time this much quicker, and this much pace
+    # advantage added when our car attacks (or taken from a car attacking us).
+    lap_gain_s: float = 0.15
+    attack_s: float = 1.0
+    defend_s: float = 0.5
+    # Battery share one overtake lap uses, recharge per lap, and the start charge.
+    cost: float = 0.5
+    recharge: float = 0.1
+    start: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -887,6 +913,14 @@ class StrategyParams:
     # (a stop to fix a puncture always happens). Stops a lap or two apart are not
     # a strategy a team would run; 0 = no limit. A design choice.
     min_stint_laps: int = 0
+    # No stop by choice before this share of the race (0 = allowed), unless a
+    # safety car / VSC / red flag is out, the tyres are worn past early_stop_wear,
+    # the weather calls for another tyre type, or after damage.
+    min_stop_fraction: float = 0.0
+    early_stop_wear: float = 0.7
+    # Observation adds the rivals' pace (last lap of the cars ahead and behind, the
+    # leader and the field, against ours): `PACE_OBS_SIZE` inputs.
+    pace_obs: bool = False
     # Fuel at the start (kg), burnt evenly so the car finishes empty.
     start_fuel_kg: float = MAX_RACE_FUEL_KG
     # Stand-in driver: lap time = limit lap on the optimal line at the driver's
@@ -950,6 +984,9 @@ class StrategyParams:
     # Safety car and VSC periods; with either chance > 0 the observation adds
     # `NEUTRAL_OBS_SIZE` inputs.
     neutral: NeutralParams = NeutralParams()
+    # Overtake mode; when enabled the action adds a third choice (0/1) and the
+    # observation the battery charge.
+    ers: ErsParams = ErsParams()
 
     def compound(self, name: str) -> CompoundParams:
         if name not in TYRES:

@@ -85,6 +85,11 @@ WEATHER_OBS_SIZE = 11
 INCIDENT_OBS_SIZE = 4
 #: Extra inputs when SC / VSC are on: SC now, VSC now, laps of it so far, stop cost.
 NEUTRAL_OBS_SIZE = 4
+#: Extra inputs with ``pace_obs``: last-lap pace of the car ahead, behind, the
+#: leader and the field median, each against ours.
+PACE_OBS_SIZE = 4
+#: Extra input with overtake mode: the battery charge.
+ERS_OBS_SIZE = 1
 
 
 @dataclass(frozen=True, eq=False)
@@ -195,12 +200,15 @@ class StrategyEnv(gym.Env[Obs, Any]):
         self.tyres = TYRES if params.wet_tyres else COMPOUNDS
         self.action_space = spaces.MultiDiscrete(
             [len(self.tyres) + 1, len(params.push_levels)]
+            + ([2] if params.ers.enabled else [])
         )
         size = OBS_SIZE + (WEATHER_OBS_SIZE if params.wet_tyres else 0)
         size += INCIDENT_OBS_SIZE if params.incidents.chance > 0 else 0
         nu = params.neutral
-        self.use_neutral = nu.sc_chance > 0 or nu.vsc_chance > 0
+        self.use_neutral = nu.sc_chance > 0 or nu.vsc_chance > 0 or nu.red_chance > 0
         size += NEUTRAL_OBS_SIZE if self.use_neutral else 0
+        size += PACE_OBS_SIZE if params.pace_obs else 0
+        size += ERS_OBS_SIZE if params.ers.enabled else 0
         self.observation_space = spaces.Box(-1.0, 1.0, (size,), np.float32)
         self.weather: RaceWeather = dry_weather(1)
         self.track = next(iter(tracks.values()))
@@ -218,8 +226,10 @@ class StrategyEnv(gym.Env[Obs, Any]):
         self.incident: tuple[int, str, float] | None = None
         self.incident_done = False
         self.must_pit = False
-        # Per lap: None, "sc" or "vsc".
+        # Per lap: None, "sc", "vsc" or "red".
         self.neutral: list[str | None] = []
+        self.battery = params.ers.start
+        self.last_laps: list[float] = []
 
     # --- helpers -----------------------------------------------------------------
 
@@ -296,6 +306,10 @@ class StrategyEnv(gym.Env[Obs, Any]):
             obs += self._incident_obs()
         if self.use_neutral:
             obs += self._neutral_obs()
+        if p.pace_obs:
+            obs += self._pace_obs()
+        if p.ers.enabled:
+            obs.append(self.battery)
         return np.clip(np.array(obs, dtype=np.float32), -1.0, 1.0)
 
     def _incident_obs(self) -> list[float]:
@@ -308,6 +322,36 @@ class StrategyEnv(gym.Env[Obs, Any]):
             1.0 if self.must_pit else 0.0,
         ]
 
+    def _pace_obs(self) -> list[float]:
+        """Rivals' last lap against ours (s, + = they were slower), / 3 s."""
+        if not self.last_laps:
+            return [0.0] * PACE_OBS_SIZE
+        pos = self._position()
+        mine = self.last_laps[0]
+
+        def rel(c: int | None) -> float:
+            if c is None:
+                return 0.0
+            return float(np.clip((self.last_laps[c] - mine) / 3.0, -1, 1))
+
+        ahead = self.order[pos - 1] if pos > 0 else None
+        behind = self.order[pos + 1] if pos + 1 < len(self.order) else None
+        field = float(np.median(self.last_laps[1:]))
+        return [
+            rel(ahead),
+            rel(behind),
+            rel(self.order[0]) if self.order[0] != 0 else 0.0,
+            float(np.clip((field - mine) / 3.0, -1, 1)),
+        ]
+
+    def restart_now(self) -> bool:
+        """The coming lap is a green-flag restart after an SC or red flag."""
+        return (
+            self.neutral_now() is None
+            and 0 < self.lap <= len(self.neutral)
+            and self.neutral[self.lap - 1] in ("sc", "red")
+        )
+
     def neutral_now(self) -> str | None:
         """ "sc" / "vsc" if the coming lap is neutralised, else None."""
         return self.neutral[self.lap] if self.lap < len(self.neutral) else None
@@ -318,11 +362,11 @@ class StrategyEnv(gym.Env[Obs, Any]):
         while kind and self.lap - run - 1 >= 0 and self.neutral[self.lap - run - 1]:
             run += 1
         nu = self.params.neutral
-        loss = {"sc": nu.sc_pit_loss_s, "vsc": nu.vsc_pit_loss_s}.get(
+        loss = {"sc": nu.sc_pit_loss_s, "vsc": nu.vsc_pit_loss_s, "red": 0.0}.get(
             kind or "", self.params.pit_loss_s
         )
         return [
-            1.0 if kind == "sc" else 0.0,
+            1.0 if kind in ("sc", "red") else 0.0,
             1.0 if kind == "vsc" else 0.0,
             min(1.0, run / 5),
             min(1.0, loss / max(1.0, self.params.pit_loss_s)),
@@ -331,29 +375,54 @@ class StrategyEnv(gym.Env[Obs, Any]):
     def _draw_neutral(
         self, rng: np.random.Generator, forced: str | None
     ) -> list[str | None]:
+        """Neutralised laps. ``forced``: "sc", "vsc", "red", "sc2" (two SCs) or
+        "none"; None draws from the chances."""
         nu = self.params.neutral
         roll = rng.random(3)  # always three draws, so options do not shift the RNG
         laps: list[str | None] = [None] * self.total_laps
         if forced == "none":
             return laps
+        if forced not in (None, "sc", "vsc", "red", "sc2"):
+            raise ValueError(f"unknown neutral {forced!r}: sc, vsc, red, sc2, none")
+        kind: str | None
         if forced is None:
-            if roll[0] < nu.sc_chance:
-                kind = "sc"
-            elif roll[0] < nu.sc_chance + nu.vsc_chance:
-                kind = "vsc"
-            else:
-                return laps
-        elif forced in ("sc", "vsc"):
-            kind = forced
+            kind = (
+                "sc"
+                if roll[0] < nu.sc_chance
+                else "vsc"
+                if roll[0] < nu.sc_chance + nu.vsc_chance
+                else None
+            )
         else:
-            raise ValueError(f"unknown neutral {forced!r}: sc, vsc or none")
-        lo, hi = nu.lap_range
-        first = max(1, int((lo + float(roll[1]) * (hi - lo)) * self.total_laps))
-        span = nu.sc_laps if kind == "sc" else nu.vsc_laps
-        length = span[0] + int(float(roll[2]) * (span[1] - span[0] + 1))
-        for k in range(first, min(self.total_laps - 1, first + length)):
-            laps[k] = kind
+            kind = "sc" if forced == "sc2" else forced
+        if kind:
+            self._place_neutral(laps, kind, float(roll[1]), float(roll[2]))
+        if nu.max_periods > 1 or nu.red_chance > 0:
+            more = rng.random(4)
+            if forced == "sc2" or (
+                forced is None and nu.max_periods > 1 and more[0] < nu.second_chance
+            ):
+                share = nu.sc_chance / max(1e-9, nu.sc_chance + nu.vsc_chance)
+                second = "sc" if forced == "sc2" or more[3] < share else "vsc"
+                self._place_neutral(laps, second, float(more[1]), float(more[2]))
+            elif forced is None and more[0] >= 1.0 - nu.red_chance:
+                self._place_neutral(laps, "red", float(more[1]), 0.0)
         return laps
+
+    def _place_neutral(
+        self, laps: list[str | None], kind: str, r_start: float, r_len: float
+    ) -> None:
+        nu = self.params.neutral
+        lo, hi = nu.lap_range
+        first = max(1, int((lo + r_start * (hi - lo)) * self.total_laps))
+        if kind == "red":
+            length = 1
+        else:
+            span = nu.sc_laps if kind == "sc" else nu.vsc_laps
+            length = span[0] + int(r_len * (span[1] - span[0] + 1))
+        for k in range(first, min(self.total_laps - 1, first + length)):
+            if laps[k] is None:
+                laps[k] = kind
 
     def _neutral_lap(
         self, start_s: list[float], lap_s: list[float], kind: str
@@ -368,8 +437,9 @@ class StrategyEnv(gym.Env[Obs, Any]):
         for i in range(1, len(new)):
             prev, c = new[i - 1], new[i]
             gap = raw[c] - raw[prev]
-            if kind == "sc" and gap > nu.sc_gap_s:
-                gap = nu.sc_gap_s + (gap - nu.sc_gap_s) * nu.sc_keep
+            if kind in ("sc", "red") and gap > nu.sc_gap_s:
+                keep = nu.sc_keep if kind == "sc" else 0.0
+                gap = nu.sc_gap_s + (gap - nu.sc_gap_s) * keep
             end[c] = end[prev] + max(gap, p.min_gap_s)
         return new, end
 
@@ -597,6 +667,8 @@ class StrategyEnv(gym.Env[Obs, Any]):
         )
         self.incident_done = False
         self.must_pit = False
+        self.battery = p.ers.start
+        self.last_laps = []
         forced_n = opts.get("neutral")
         self.neutral = (
             self._draw_neutral(rng, forced_n)
@@ -617,9 +689,24 @@ class StrategyEnv(gym.Env[Obs, Any]):
             )
             pit_choice = 0
         pit_to = self.tyres[pit_choice - 1] if pit_choice else None
+        neutral = self.neutral_now()
+        me = self.cars[0]
         if (
             pit_to is not None
             and not self.must_pit
+            and neutral is None
+            and self.lap < p.min_stop_fraction * self.total_laps
+            and me.wear < p.early_stop_wear
+            and tyre_class(pit_to) == tyre_class(me.compound)
+            and not (
+                self.incident_done and self.incident and self.incident[1] == "spin"
+            )
+        ):
+            pit_to = None  # no early stop by choice
+        if (
+            pit_to is not None
+            and not self.must_pit
+            and neutral != "red"
             and self.cars[0].stops > 0
             and self.cars[0].tyre_laps < p.min_stint_laps
         ):
@@ -629,11 +716,21 @@ class StrategyEnv(gym.Env[Obs, Any]):
         self.must_pit = False
         ours = LapPlan(push=p.push_levels[push_index], pit_to=pit_to)
         n = p.n_cars
-        neutral = self.neutral_now()
         nu = p.neutral
-        factor = nu.sc_lap_factor if neutral == "sc" else nu.vsc_lap_factor
+        factor = nu.vsc_lap_factor if neutral == "vsc" else nu.sc_lap_factor
         slow = self.ref_lap_s * factor
-        cheap = nu.sc_pit_loss_s if neutral == "sc" else nu.vsc_pit_loss_s
+        cheap = {"sc": nu.sc_pit_loss_s, "vsc": nu.vsc_pit_loss_s, "red": 0.0}.get(
+            neutral or "", p.pit_loss_s
+        )
+        ers = p.ers
+        deploy = (
+            ers.enabled
+            and len(action) > 2
+            and int(action[2]) == 1
+            and neutral is None
+            and self.lap > 0
+            and self.battery >= ers.cost
+        )
         start_s = [c.time_s for c in self.cars]
         laps = [0.0] * n
         pitted = [False] * n
@@ -651,6 +748,13 @@ class StrategyEnv(gym.Env[Obs, Any]):
                     neutral is not None,
                 )
             )
+            if c != 0 and neutral == "red":
+                # Red flag: a free set, the next planned one or a fresh one of these.
+                fixed = self.plans[c].params
+                nxt = fixed.stints[min(self.cars[c].stops + 1, len(fixed.stints) - 1)]
+                if tyre_class(self.cars[c].compound) != "slick":
+                    nxt = self.cars[c].compound
+                plan = replace(plan, pit_to=nxt)
             dirty = pos > 0 and (
                 self.cars[c].time_s - self.cars[self.order[pos - 1]].time_s
                 < p.dirty_air_gap_s
@@ -666,6 +770,8 @@ class StrategyEnv(gym.Env[Obs, Any]):
                 self.weather.at(self.lap),
             )
             pitted[c] = plan.pit_to is not None
+            if c == 0 and deploy:
+                laps[c] -= ers.lap_gain_s
             if neutral:
                 # Everyone at the safety-car pace; a stop costs less; less wear.
                 laps[c] = slow + (cheap if pitted[c] else 0.0)
@@ -689,11 +795,30 @@ class StrategyEnv(gym.Env[Obs, Any]):
                 self.stop_laps[c].append(self.lap)
         before = self._position()
         draws = [float(x) for x in self.np_random.random(4 * n)]
+        rp = p
+        if deploy:
+            rp = replace(
+                rp,
+                attack_skill_s=rp.attack_skill_s + ers.attack_s,
+                defend_skill_s=rp.defend_skill_s + ers.defend_s,
+            )
+        if self.restart_now() and nu.restart_attack_s:
+            bonus = nu.restart_attack_s
+            rp = replace(
+                rp,
+                pass_delta_s=rp.pass_delta_s - bonus,
+                attack_skill_s=rp.attack_skill_s + bonus,
+                defend_skill_s=rp.defend_skill_s - bonus,
+            )
+        if ers.enabled:
+            self.battery = min(
+                1.0, self.battery - (ers.cost if deploy else 0.0) + ers.recharge
+            )
         if neutral:
             self.order, end = self._neutral_lap(start_s, laps, neutral)
         else:
             self.order, end = resolve_lap(
-                p,
+                rp,
                 self.order,
                 start_s,
                 laps,
@@ -715,6 +840,7 @@ class StrategyEnv(gym.Env[Obs, Any]):
                 self.track_passed += int(was and not now)
         self.cars = [replace(c, time_s=e) for c, e in zip(new_cars, end, strict=True)]
         self.last_lap_s = end[0] - start_s[0]
+        self.last_laps = [e - s0 for e, s0 in zip(end, start_s, strict=True)]
         self.lap += 1
         self.orders.append(list(self.order))
         after = self._position()
@@ -740,6 +866,8 @@ class StrategyEnv(gym.Env[Obs, Any]):
                 "wetness": wetness,
                 "push": ours.push,
                 "neutral": neutral,
+                "ers": deploy,
+                "battery": self.battery,
             }
         )
         return self._obs(), float(reward), done, False, info

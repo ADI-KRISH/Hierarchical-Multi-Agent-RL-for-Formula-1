@@ -1,0 +1,26 @@
+{
+ "red|baseline": {
+  "wins": 0.975,
+  "pos": 1.025,
+  "stops": 1.6,
+  "time": 4856.102519972771
+ },
+ "red|runs/strategy_master/model_best.zip": {
+  "wins": 0.98,
+  "pos": 1.08,
+  "stops": 1.73,
+  "time": 4847.898065215215
+ },
+ "rain|baseline": {
+  "wins": 0.665,
+  "pos": 2.555,
+  "stops": 3.07,
+  "time": 4992.1767281230805
+ },
+ "rain|runs/strategy_master/model_best.zip": {
+  "wins": 0.895,
+  "pos": 1.585,
+  "stops": 2.56,
+  "time": 4977.138510318112
+ }
+}

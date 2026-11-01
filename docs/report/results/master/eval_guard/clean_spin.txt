@@ -1,0 +1,4 @@
+clean     baseline                                 wins  99.0%  place 1.01  stops 1.00  time 4830.9
+clean     runs/strategy_master/model_best.zip      wins 100.0%  place 1.00  stops 1.37  time 4824.3
+spin      baseline                                 wins  13.0%  place 5.24  stops 1.00  time 4845.3
+spin      runs/strategy_master/model_best.zip      wins  38.5%  place 3.42  stops 1.52  time 4841.2

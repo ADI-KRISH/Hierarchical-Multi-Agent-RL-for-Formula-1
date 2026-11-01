@@ -1,0 +1,38 @@
+{
+ "red|baseline": {
+  "wins": 0.975,
+  "pos": 1.025,
+  "stops": 1.63,
+  "time": 4856.154159493978
+ },
+ "red|runs/strategy_master/model_best.zip": {
+  "wins": 0.98,
+  "pos": 1.08,
+  "stops": 1.805,
+  "time": 4848.354293290262
+ },
+ "red|runs/strategy_master/model_final.zip": {
+  "wins": 0.935,
+  "pos": 1.295,
+  "stops": 1.97,
+  "time": 4848.482912985509
+ },
+ "rain|baseline": {
+  "wins": 0.675,
+  "pos": 2.345,
+  "stops": 3.18,
+  "time": 4991.757355754711
+ },
+ "rain|runs/strategy_master/model_best.zip": {
+  "wins": 0.92,
+  "pos": 1.39,
+  "stops": 2.665,
+  "time": 4976.821862227559
+ },
+ "rain|runs/strategy_master/model_final.zip": {
+  "wins": 0.9,
+  "pos": 1.51,
+  "stops": 2.725,
+  "time": 4974.35795063911
+ }
+}

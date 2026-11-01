@@ -1,0 +1,4 @@
+vsc       baseline                                 wins  96.0%  place 1.04  stops 1.00  time 4886.3
+vsc       runs/strategy_master/model_best.zip      wins  91.0%  place 1.45  stops 1.41  time 4882.8
+sc2       baseline                                 wins  93.0%  place 1.15  stops 1.00  time 5078.7
+sc2       runs/strategy_master/model_best.zip      wins  94.5%  place 1.14  stops 1.76  time 5071.4

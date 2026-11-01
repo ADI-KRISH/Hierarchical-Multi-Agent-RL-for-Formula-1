@@ -1,0 +1,26 @@
+{
+ "puncture|baseline": {
+  "wins": 0.005,
+  "pos": 9.7,
+  "stops": 1.635,
+  "time": 4863.424387845131
+ },
+ "puncture|runs/strategy_master/model_best.zip": {
+  "wins": 0.055,
+  "pos": 8.06,
+  "stops": 1.92,
+  "time": 4852.73376930427
+ },
+ "sc|baseline": {
+  "wins": 0.935,
+  "pos": 1.085,
+  "stops": 1.0,
+  "time": 4959.506810284375
+ },
+ "sc|runs/strategy_master/model_best.zip": {
+  "wins": 0.955,
+  "pos": 1.155,
+  "stops": 1.53,
+  "time": 4952.780318433247
+ }
+}

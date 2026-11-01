@@ -1,0 +1,26 @@
+{
+ "vsc|baseline": {
+  "wins": 0.96,
+  "pos": 1.045,
+  "stops": 1.0,
+  "time": 4886.292460626744
+ },
+ "vsc|runs/strategy_master/model_best.zip": {
+  "wins": 0.91,
+  "pos": 1.45,
+  "stops": 1.41,
+  "time": 4882.770883664887
+ },
+ "sc2|baseline": {
+  "wins": 0.93,
+  "pos": 1.15,
+  "stops": 1.0,
+  "time": 5078.7058521518275
+ },
+ "sc2|runs/strategy_master/model_best.zip": {
+  "wins": 0.945,
+  "pos": 1.135,
+  "stops": 1.765,
+  "time": 5071.438953426291
+ }
+}

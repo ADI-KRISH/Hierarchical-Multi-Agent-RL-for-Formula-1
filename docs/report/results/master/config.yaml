@@ -1,0 +1,71 @@
+baseline:
+  max_wear: 0.8
+  push_index: 2
+  stints:
+  - medium
+  - hard
+  stop_fractions:
+  - 0.45
+env:
+  attack_skill_s: 3.4
+  car_pace_spread: 0.0
+  early_stop_wear: 0.7
+  ers:
+    enabled: true
+  grid_slot: 10
+  grip_min: 0.35
+  incidents:
+    chance: 0.35
+    puncture_share: 0.5
+  min_stint_laps: 5
+  min_stop_fraction: 0.25
+  n_cars: 10
+  neutral:
+    lap_range:
+    - 0.05
+    - 0.9
+    max_periods: 2
+    red_chance: 0.05
+    restart_attack_s: 0.5
+    sc_chance: 0.3
+    sc_laps:
+    - 2
+    - 6
+    second_chance: 0.3
+    vsc_chance: 0.15
+  our_pace: 1.01
+  pace_obs: true
+  pit_loss_s: 22.0
+  reward:
+    finish_weight: 0.0
+    position_weight: 0.0
+    rule_penalty: 50.0
+    time_weight: 0.1
+    win_bonus: 30.0
+  rival_stop_jitter: 0.05
+  rivals: baseline
+  weather:
+    rain_chance: 0.25
+  wet_tyres: true
+ppo:
+  batch_size: 256
+  ent_coef: 0.01
+  gae_lambda: 0.95
+  gamma: 0.995
+  learning_rate: 0.0003
+  n_epochs: 10
+  n_steps: 512
+run:
+  driver_profile: configs/driver_profiles/defend_v2.json
+  eval_every_steps: 100000
+  eval_races: 40
+  eval_tracks: validation
+  n_envs: 4
+  name: strategy_master
+  seed: 0
+  select_by: wins
+  stay_out_prior: 5.0
+  subproc: true
+  total_timesteps: 4000000
+  train_tracks: train
+strategy: true

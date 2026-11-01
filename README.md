@@ -22,7 +22,8 @@ with Stable-Baselines3:
 | Clean passes in section battles (350) | **49** | 29 (starting policy) |
 | Race wins vs rule-based field, measured driver | **72%** | 10% |
 | Race wins in the rain | **68%** | 0% |
-| Race wins, 1% faster car, mean of 3 seeds: clean / after spin / safety car | **96.7% / 29.8%** / 78% | 91% / 4.5% / **89.5%** |
+| Race wins, one strategist for 8 race cases (1% faster car from P10): clean / spin / safety car / rain | **100% / 38.5% / 95.5% / 89.5%** | 99% / 13% / 93.5% / 66.5% |
+| Same, VSC (the one case it loses) | 91% | **96%** |
 | Planner lap pace | **+1.1%** off the limit lap | pure SAC RL: +17-20% |
 
 ## Documents
@@ -79,8 +80,8 @@ Training needs no GPU; a laptop CPU is enough.
 ### Train
 
 ```bash
-# Strategy Agent (lap-by-lap race sim; ~40 min for 2M laps on 4 cores)
-uv run python -m f1rl.train --config configs/strategy_all.yaml
+# Strategy Agent, final: one agent for every race case (4M laps)
+uv run python -m f1rl.train --config configs/strategy_master.yaml
 
 # Driver Agent, move-level PPO (needs the starting models named in the config)
 uv run python -m f1rl.train --config configs/defend_sections_v2.yaml
@@ -100,8 +101,8 @@ Each run writes `runs/<name>/` with the resolved config, seed, git commit,
 ```bash
 # Strategy: held-out scorecard per race case (clean, spin, puncture, SC, VSC),
 # same seeded races for the rule-based plan and each model
-uv run python scripts/strategy_scorecard.py configs/strategy_all.yaml \
-    runs/strategy_all/model_best.zip --races 200
+uv run python scripts/strategy_scorecard.py configs/strategy_master.yaml \
+    runs/strategy_master/model_best.zip --races 200
 
 # Driver: scenario scorecard on held-out circuits (add --real for real F1 starts)
 uv run python -m f1rl.scenarios --policy runs/<run>/model_best.zip --tracks tum_held_out

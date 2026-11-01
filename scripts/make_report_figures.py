@@ -409,6 +409,7 @@ def strategy_curves() -> None:
         ("strategy_all_eval.csv", "all cases, 1% car", BLUE),
         ("strategy_all_dominant_eval.csv", "all cases, 3% car", ORANGE),
         ("strategy_recover_eval.csv", "incident every race", RED),
+        ("master/eval.csv", "one agent, every case (final)", "#6b3fa0"),
     ):
         r = rows(name)
         ax.plot(
@@ -421,10 +422,10 @@ def strategy_curves() -> None:
     style(
         ax,
         "environment steps (millions of laps)",
-        "validation win rate (30 races)",
+        "validation win rate (30-40 races)",
         "Strategy Agent learning curves (dotted = rule-based plan)",
     )
-    ax.legend(fontsize=8, loc="upper left")
+    ax.legend(fontsize=8, loc="lower right")
     save(fig, "fig6_strategy_learning_curves.png")
 
 
@@ -464,7 +465,7 @@ def seed_band() -> None:
     style(
         ax,
         "environment steps (millions of laps)",
-        "validation win rate (30 races)",
+        "validation win rate (30-40 races)",
         "Strategy Agent (strategy_all, 1% car): stability across seeds",
     )
     ax.legend(fontsize=8, loc="upper left")
@@ -472,21 +473,65 @@ def seed_band() -> None:
 
 
 def held_out_bars() -> None:
-    cases = ["clean", "spin", "puncture", "safety car", "VSC"]
-    agent = [96, 29, 0, 94.5, 88.5]
-    base = [91, 4.5, 0, 89.5, 89]
-    x = np.arange(len(cases))
-    fig, ax = plt.subplots(figsize=(7, 3.6))
-    ax.bar(x - 0.2, base, 0.4, color=ORANGE, label="rule-based plan")
-    ax.bar(x + 0.2, agent, 0.4, color=BLUE, label="Strategy Agent (PPO)")
-    ax.set_xticks(x, cases)
+    """Final Strategy Agent vs the rule-based plan, per race case (held out)."""
+    res: dict[str, dict[str, float]] = {}
+    for f in sorted((DATA / "master" / "eval_guard").glob("*.json")):
+        for key, v in json.loads(f.read_text()).items():
+            case, who = key.split("|")
+            res.setdefault(case, {})["base" if who == "baseline" else "agent"] = (
+                100 * v["wins"]
+            )
+    order = ["clean", "spin", "puncture", "sc", "sc2", "vsc", "red", "rain"]
+    names = [
+        "clean",
+        "spin",
+        "puncture",
+        "safety\ncar",
+        "two\nSCs",
+        "VSC",
+        "red\nflag",
+        "rain",
+    ]
+    x = np.arange(len(order))
+    fig, ax = plt.subplots(figsize=(8, 3.6))
+    ax.bar(
+        x - 0.2,
+        [res[c]["base"] for c in order],
+        0.4,
+        color=ORANGE,
+        label="rule-based plan",
+    )
+    ax.bar(
+        x + 0.2,
+        [res[c]["agent"] for c in order],
+        0.4,
+        color=BLUE,
+        label="final Strategy Agent",
+    )
+    for i, c in enumerate(order):
+        ax.text(
+            i + 0.2,
+            res[c]["agent"] + 1.5,
+            f"{res[c]['agent']:.0f}",
+            ha="center",
+            fontsize=7,
+        )
+        ax.text(
+            i - 0.2,
+            res[c]["base"] + 1.5,
+            f"{res[c]['base']:.0f}",
+            ha="center",
+            fontsize=7,
+        )
+    ax.set_xticks(x, names)
+    ax.set_ylim(0, 110)
     style(
         ax,
         "race case (200 held-out races each)",
         "win rate (%)",
-        "Held-out wins by race case, 1% faster car",
+        "Held-out wins by race case: one agent for every case",
     )
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=8, loc="center left")
     save(fig, "fig8_strategy_held_out_cases.png")
 
 
@@ -626,50 +671,49 @@ def pass_curves() -> None:
 
 
 def race_trace() -> None:
-    """Place per lap in one seeded held-out safety-car race (Suzuka)."""
-    traces = sorted(DATA.glob("race_trace_suzuka_sc_*.json"))
-    first = json.loads(traces[0].read_text())
-    runs = [("rule-based plan", first["baseline"], ORANGE, "-")]
-    styles = [(BLUE, "-"), (GREEN, "--")]
-    for path, (c, ls) in zip(traces, styles, strict=False):
-        label = path.stem.replace("race_trace_suzuka_sc_", "agent, ")
-        runs.append((label, json.loads(path.read_text())["agent"], c, ls))
-    fig, ax = plt.subplots(figsize=(8, 3.6))
-    sc = [h["lap"] for h in first["baseline"]["history"] if h["neutral"] == "sc"]
-    if sc:
-        ax.axvspan(min(sc) - 0.5, max(sc) + 0.5, color=GREY, alpha=0.2, lw=0)
-        ax.text(min(sc) - 0.3, 6.0, "safety\ncar", fontsize=8, color=GREY)
-    for label, run, c, ls in runs:
-        h = run["history"]
-        laps = [x["lap"] for x in h]
-        ax.plot(
-            laps,
-            [x["position"] for x in h],
-            color=c,
-            ls=ls,
-            lw=1.6,
-            label=f"{label}: P{run['position']}, {run['stops']} stop(s)",
-        )
-        for x in h:
-            if x["pit"]:
-                ax.plot(x["lap"], x["position"], "o", color=c, ms=6)
-                ax.annotate(
-                    x["pit"][0].upper(),
-                    (x["lap"], x["position"]),
-                    textcoords="offset points",
-                    xytext=(4, 4),
-                    fontsize=8,
-                    color=c,
-                )
-    ax.invert_yaxis()
-    ax.set_yticks(range(1, 11))
-    style(
-        ax,
-        "lap",
-        "place",
-        f"Held-out race at {first['track']} with a safety car (dots: pit stops)",
+    """Place per lap in one seeded held-out safety-car race at Suzuka: the earlier
+    all-cases agent (seed 0) and the final agent, each against the rule-based plan
+    on the same seed under its own configuration."""
+    panels = (
+        ("race_trace_suzuka_sc_seed0.json", "(a) earlier agent (strategy_all, seed 0)"),
+        ("race_trace_suzuka_sc_master.json", "(b) final agent (strategy_master)"),
     )
-    ax.legend(fontsize=8, loc="upper left")
+    fig, axes = plt.subplots(1, 2, figsize=(11, 3.8), sharey=True)
+    for ax, (name, title) in zip(axes, panels, strict=True):
+        d = json.loads((DATA / name).read_text())
+        hist = d["baseline"]["history"]
+        sc = [h["lap"] for h in hist if h["neutral"] == "sc"]
+        if sc:
+            ax.axvspan(min(sc) - 0.5, max(sc) + 0.5, color=GREY, alpha=0.2, lw=0)
+            ax.text(min(sc) - 0.3, 6.0, "safety\ncar", fontsize=8, color=GREY)
+        for key, label, c in (
+            ("baseline", "rule-based plan", ORANGE),
+            ("agent", "agent", BLUE),
+        ):
+            run = d[key]
+            h = run["history"]
+            ax.plot(
+                [x["lap"] for x in h],
+                [x["position"] for x in h],
+                color=c,
+                lw=1.6,
+                label=f"{label}: P{run['position']}, {run['stops']} stop(s)",
+            )
+            for x in h:
+                if x["pit"]:
+                    ax.plot(x["lap"], x["position"], "o", color=c, ms=6)
+                    ax.annotate(
+                        x["pit"][0].upper(),
+                        (x["lap"], x["position"]),
+                        textcoords="offset points",
+                        xytext=(4, 4),
+                        fontsize=8,
+                        color=c,
+                    )
+        ax.set_yticks(range(1, 11))
+        style(ax, "lap", "place", title)
+        ax.legend(fontsize=8, loc="upper left" if ax is axes[0] else "lower right")
+    axes[0].invert_yaxis()
     save(fig, "fig13_race_trace.png")
 
 

@@ -1,0 +1,6 @@
+puncture  baseline                                 wins   0.5%  place 9.70  stops 1.65  time 4863.5
+puncture  runs/strategy_master/model_best.zip      wins   5.5%  place 8.15  stops 1.95  time 4853.1
+puncture  runs/strategy_master/model_final.zip     wins   1.0%  place 9.04  stops 2.44  time 4856.5
+sc        baseline                                 wins  93.5%  place 1.08  stops 1.00  time 4959.5
+sc        runs/strategy_master/model_best.zip      wins  95.5%  place 1.16  stops 1.54  time 4953.0
+sc        runs/strategy_master/model_final.zip     wins  94.0%  place 1.19  stops 1.82  time 4954.6

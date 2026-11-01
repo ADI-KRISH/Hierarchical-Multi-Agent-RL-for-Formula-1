@@ -40,7 +40,8 @@ driver, and learns to handle safety cars, rain, spins and punctures.
 | Defend run 2 | Main driver also trained to defend | Held-out defences 273 vs 264 (line) and passes 49 vs 29 |
 | Real pace | Realistic 0.4-2 s/lap pace gaps, three sim fixes, committed lane moves | Overtaking at small gaps still rare |
 | Strategy Agent | Lap-by-lap race model, `StrategyEnv`, PPO strategist on the measured driver | 72% wins vs 10% for the rule-based plan; rain 68% vs 0% |
-| Strategy, every case | Fast car from P10, spins, punctures, SC/VSC, red flags, ERS overtake mode | 96% clean wins vs 91%, 29% after a spin vs 4.5% |
+| Strategy, every case | Fast car from P10, spins, punctures, SC/VSC; three seeds | 96.7% clean wins vs 91%, 29.8% after a spin vs 4.5%; SC weak spot (78% vs 89.5%) |
+| One strategist for all cases | Stop rules, red flags, two SCs, rain, rivals' pace, overtake mode | Rain 89.5% vs 66.5%, SC 95.5% vs 93.5%; loses VSC 91% vs 96% |
 
 ## 3. The agents
 
@@ -139,7 +140,7 @@ defenders, 92 attacks vs slower cars, 587 defences).
 | `strategy_recover.yaml` | a spin or puncture every race | place 6.9 vs 8.1 |
 | `strategy_all.yaml` | every case: clean, spin, puncture, SC, VSC (1% car) | 1 seed, no min-stint rule: clean 96 vs 91%, spin 29 vs 4.5%, SC 94.5 vs 89.5%; 3 seeds with the rule: 96.7 / 29.8 / 78% |
 | `strategy_all_dominant.yaml` | every case, 3% car | ~100% except puncture 56 vs 44% |
-| `strategy_master.yaml` | adds rain, red flags, second SC, restarts, ERS, early-stop rule | in progress when this was written |
+| `strategy_master.yaml` (final) | one agent for 8 cases: adds rain, red flags, second SC, restarts, rivals' pace, overtake mode, stop rules | held-out wins: clean 100 vs 99%, spin 38.5 vs 13%, puncture 5.5 vs 0.5%, SC 95.5 vs 93.5%, two SCs 94.5 vs 93%, VSC 91 vs 96%, red flag 98 vs 97.5%, rain 89.5 vs 66.5% |
 
 ## 5. Tools and technologies
 
@@ -181,7 +182,7 @@ defenders, 92 attacks vs slower cars, 587 defences).
 * Paired comparison tools (same seed, same race) and held-out scorecards.
 * HTML replays: driver comparison, optimal lines, battle replays, race replays.
 * One YAML config per experiment; every run logs its config, seed and git commit.
-* 341 unit tests (all passing); ruff and strict mypy.
+* 342 unit tests (all passing); ruff and strict mypy.
 
 ## 7. Problems we faced and how we handled them
 
@@ -282,7 +283,8 @@ defenders, 92 attacks vs slower cars, 587 defences).
 | Clean passes (held-out)? | 49 of 350 vs 29 for the starting model |
 | Strategy wins vs rule-based (measured driver)? | 72% vs 10% |
 | Strategy wins in rain? | 68% vs 0% |
-| Strategy wins, 1% faster car: clean / spin / SC? | 3 seeds: 96.7 / 29.8 / 78% vs 91 / 4.5 / 89.5% (SC is a known weak spot) |
+| Strategy wins, 1% faster car: clean / spin / SC? | earlier config, 3 seeds: 96.7 / 29.8 / 78% vs 91 / 4.5 / 89.5% (SC weak spot) |
+| Final strategist, one agent for 8 cases | beats or matches the plan in 7 of 8; rain 89.5 vs 66.5%, spin 38.5 vs 13%, SC 95.5 vs 93.5%; VSC 91 vs 96% |
 | Strategy wins, fastest car, win-only? | 200 of 200 |
 
 ## 9. Where things live

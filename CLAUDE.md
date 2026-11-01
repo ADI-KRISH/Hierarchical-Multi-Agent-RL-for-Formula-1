@@ -1,20 +1,19 @@
-# FormulaOneRL (MVP)
+# FormulaOneRL
 
-A single **Driver Agent** that learns to lap a custom Formula 1 track simulator
-as fast as possible, beating a rule-based baseline. Reinforcement learning with
-Stable Baselines3 on a custom Gymnasium environment.
-
-**Scope discipline:** this MVP is ONE agent only. The two-agent hierarchy (a
-Strategist that plans pit stops / tires / ERS) is FUTURE WORK — do not build it
-unless a task explicitly says so. Full long-term vision lives in `docs/context.md`.
-Current build plan lives in `docs/roadmap.md` — work it one phase at a time.
+Hierarchical RL for Formula 1 on a custom Gymnasium simulator with Stable
+Baselines3: a **Driver Agent** (PPO picks race-craft moves every 0.5 s on top of a
+path planner and a no-crash safety shield) and a **Strategy Agent** (PPO picks pit
+stops, tyres and push level once a lap). Overview: `README.md`; full explanation:
+`docs/PROJECT_EXPLAINER.md`; report: `docs/report/`. The original MVP plan is in
+`docs/roadmap.md` and the long-term vision in `docs/context.md`.
 
 ## Golden rules
 
 - **Custom Gymnasium env only.** Do NOT add TORCS, CARLA, or Assetto Corsa.
   The car is a point-mass / bicycle model on a parameterized track. Simulation
   speed matters more than physical realism.
-- **One env for now:** `DriverEnv` (per-step control). No `StrategyEnv` yet.
+- Environments: `DriverEnv`, `RaceEnv`, `TacticalEnv` (driver) and `StrategyEnv`
+  (strategist, one step per lap).
 - **Determinism.** Every env, training run, and eval takes an explicit `seed`.
   No unseeded RNG and no wall-clock randomness anywhere in `src/`.
 - **Don't invent F1 numbers.** Lap times, grip, and tire values come from a

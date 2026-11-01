@@ -2,9 +2,9 @@
 
 usage: uv run python scripts/make_report_figures.py
 
-Inputs are copies of each run's eval.csv in docs/report/data/ (the runs/ folders
+Inputs are copies of each run's eval.csv in docs/report/results/ (the runs/ folders
 themselves are git-ignored). Seed runs for the stability study are read from
-docs/report/data/seeds/ when present. Read-only: never trains anything.
+docs/report/results/seeds/ when present. Read-only: never trains anything.
 """
 
 import csv
@@ -20,7 +20,7 @@ import numpy as np
 from matplotlib.patches import FancyBboxPatch
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "docs" / "report" / "data"
+DATA = ROOT / "docs" / "report" / "results"
 OUT = ROOT / "docs" / "report" / "figures"
 
 BLUE, ORANGE, GREEN, GREY, RED = "#2a6fdb", "#e8833a", "#2e9d5b", "#8a8f98", "#c8403a"

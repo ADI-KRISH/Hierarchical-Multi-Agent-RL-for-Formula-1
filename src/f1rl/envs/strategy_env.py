@@ -713,6 +713,10 @@ class StrategyEnv(gym.Env[Obs, Any]):
             pit_to = None  # a new set is not changed again this soon
         if self.must_pit and pit_to is None:
             pit_to = p.incidents.forced_compound
+        if neutral == "red" and pit_to is None:
+            # Red flag: every car gets a free tyre change, ours too. Staying out
+            # means a fresh set of the same tyre.
+            pit_to = self.cars[0].compound
         self.must_pit = False
         ours = LapPlan(push=p.push_levels[push_index], pit_to=pit_to)
         n = p.n_cars

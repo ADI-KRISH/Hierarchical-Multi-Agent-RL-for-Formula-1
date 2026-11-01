@@ -32,6 +32,7 @@ from f1rl.config import (
     TYRES,
     CompoundParams,
     StrategyBaselineParams,
+    StrategyIncidentParams,
     StrategyParams,
     StrategyRewardParams,
     WeatherParams,
@@ -66,6 +67,11 @@ class StrategyRun:
     subproc: bool = False
     # Keep the checkpoint with the best mean place ("position") or most wins.
     select_by: str = "position"
+    # Added to the untrained policy's "stay out" logit, so a fresh agent mostly
+    # stays out instead of pitting on 3 laps in 4. Needed when the reward is only
+    # the win (no lap-time signal tells a random agent that a stop costs time).
+    # A starting prior on the policy, not a reward; 0 = off.
+    stay_out_prior: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -86,6 +92,12 @@ class StrategyConfig:
                 if key in w:
                     w[key] = tuple(w[key])
             raw["weather"] = WeatherParams(**w)
+        if "incidents" in raw:
+            inc = dict(raw["incidents"])
+            for key in ("lap_range", "spin_loss_range", "puncture_loss_range"):
+                if key in inc:
+                    inc[key] = tuple(inc[key])
+            raw["incidents"] = StrategyIncidentParams(**inc)
         if "reward" in raw:
             raw["reward"] = StrategyRewardParams(**raw["reward"])
         for key in ("push_levels",):
@@ -279,6 +291,12 @@ def train(config: StrategyConfig, run_dir: Path) -> None:
         vec_env_cls=SubprocVecEnv if run.subproc else DummyVecEnv,
     )
     model = PPO("MlpPolicy", vec, seed=run.seed, verbose=0, **config.ppo)
+    if run.stay_out_prior:
+        with torch.no_grad():
+            # MultiDiscrete logits: the pit choices come first, 0 = stay out.
+            head = model.policy.action_net
+            assert isinstance(head, torch.nn.Linear)
+            head.bias[0] += run.stay_out_prior
     ref = compare(
         eval_env, {"baseline": baseline_policy}, eval_names, run.eval_races, 10_000
     )["baseline"]

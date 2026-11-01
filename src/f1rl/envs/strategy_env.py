@@ -12,6 +12,10 @@ Action (MultiDiscrete [4, len(push_levels)], or [6, ...] with ``wet_tyres``):
      start on mediums.
   1: push level index (0 = conserve .. last = attack).
 
+Incidents (`StrategyIncidentParams`, off by default): in some races our car spins (time
+lost, a flat spot) or gets a puncture (a slow lap back, then a stop it must make on
+the next lap) on one drawn lap.
+
 Reward (`StrategyRewardParams`): minus seconds lost per lap against a reference
 lap, plus places gained, and at the flag a penalty per place behind the winner
 and a disqualification penalty for running only one compound.
@@ -72,6 +76,8 @@ UNDERCUT_WINDOW_LAPS = 5
 OBS_SIZE = 38
 #: Extra inputs with ``wet_tyres``: the weather, forecast and wet-tyre state.
 WEATHER_OBS_SIZE = 11
+#: Extra inputs when incidents are on: spun, punctured, time lost, must stop now.
+INCIDENT_OBS_SIZE = 4
 
 
 @dataclass(frozen=True, eq=False)
@@ -184,6 +190,7 @@ class StrategyEnv(gym.Env[Obs, Any]):
             [len(self.tyres) + 1, len(params.push_levels)]
         )
         size = OBS_SIZE + (WEATHER_OBS_SIZE if params.wet_tyres else 0)
+        size += INCIDENT_OBS_SIZE if params.incidents.chance > 0 else 0
         self.observation_space = spaces.Box(-1.0, 1.0, (size,), np.float32)
         self.weather: RaceWeather = dry_weather(1)
         self.track = next(iter(tracks.values()))
@@ -197,6 +204,10 @@ class StrategyEnv(gym.Env[Obs, Any]):
         self.history: list[dict[str, Any]] = []
         self.orders: list[list[int]] = []
         self.stop_laps: list[list[int]] = []
+        # This race's incident: (lap, "spin" | "puncture", seconds lost) or None.
+        self.incident: tuple[int, str, float] | None = None
+        self.incident_done = False
+        self.must_pit = False
 
     # --- helpers -----------------------------------------------------------------
 
@@ -269,7 +280,40 @@ class StrategyEnv(gym.Env[Obs, Any]):
         ]
         if p.wet_tyres:
             obs += self._weather_obs()
+        if p.incidents.chance > 0:
+            obs += self._incident_obs()
         return np.clip(np.array(obs, dtype=np.float32), -1.0, 1.0)
+
+    def _incident_obs(self) -> list[float]:
+        kind = self.incident[1] if self.incident and self.incident_done else ""
+        lost = self.incident[2] if self.incident and self.incident_done else 0.0
+        return [
+            1.0 if kind == "spin" else 0.0,
+            1.0 if kind == "puncture" else 0.0,
+            min(1.0, lost / GAP_SCALE_S),
+            1.0 if self.must_pit else 0.0,
+        ]
+
+    def _draw_incident(
+        self, rng: np.random.Generator, forced: str | None
+    ) -> tuple[int, str, float] | None:
+        inc = self.params.incidents
+        roll = rng.random(3)  # always three draws, so options do not shift the RNG
+        if forced == "none":
+            return None
+        if forced is None:
+            if inc.chance <= 0 or roll[0] >= inc.chance:
+                return None
+            kind = "puncture" if roll[1] < inc.puncture_share else "spin"
+        elif forced in ("spin", "puncture"):
+            kind = forced
+        else:
+            raise ValueError(f"unknown incident {forced!r}: spin or puncture")
+        lo, hi = inc.lap_range
+        lap = int(rng.uniform(lo, hi) * self.total_laps)
+        span = inc.puncture_loss_range if kind == "puncture" else inc.spin_loss_range
+        loss = span[0] + float(roll[2]) * (span[1] - span[0])
+        return max(1, lap), kind, loss
 
     def seen_wetness(self) -> float:
         """The track as the pit wall saw it on the last lap (the grid at lap 0)."""
@@ -382,6 +426,8 @@ class StrategyEnv(gym.Env[Obs, Any]):
             "rain": self.weather.wet,
             "track_passes": getattr(self, "track_passes", 0),
             "track_passed": getattr(self, "track_passed", 0),
+            "incident": self.incident[1] if self.incident else None,
+            "incident_lap": self.incident[0] if self.incident else None,
             **(self.battle_moves() if self.lap >= self.total_laps else {}),
         }
 
@@ -462,6 +508,15 @@ class StrategyEnv(gym.Env[Obs, Any]):
         # Places won and lost on track (neither car pitting that lap).
         self.track_passes = 0
         self.track_passed = 0
+        # Option "incident": "spin" / "puncture" forces one; "none" forces none.
+        forced = opts.get("incident")
+        self.incident = (
+            self._draw_incident(rng, forced)
+            if p.incidents.chance > 0 or forced not in (None, "none")
+            else None
+        )
+        self.incident_done = False
+        self.must_pit = False
         return self._obs(), self._info()
 
     def step(self, action: Any) -> tuple[Obs, float, bool, bool, dict[str, Any]]:
@@ -475,10 +530,11 @@ class StrategyEnv(gym.Env[Obs, Any]):
                 self.cars[0], compound=start, compounds_used=frozenset({start})
             )
             pit_choice = 0
-        ours = LapPlan(
-            push=p.push_levels[push_index],
-            pit_to=self.tyres[pit_choice - 1] if pit_choice else None,
-        )
+        pit_to = self.tyres[pit_choice - 1] if pit_choice else None
+        if self.must_pit and pit_to is None:
+            pit_to = p.incidents.forced_compound
+        self.must_pit = False
+        ours = LapPlan(push=p.push_levels[push_index], pit_to=pit_to)
         n = p.n_cars
         start_s = [c.time_s for c in self.cars]
         laps = [0.0] * n
@@ -507,6 +563,17 @@ class StrategyEnv(gym.Env[Obs, Any]):
                 self.weather.at(self.lap),
             )
             pitted[c] = plan.pit_to is not None
+            if c == 0 and self.incident and self.incident[0] == self.lap:
+                _, kind, loss = self.incident
+                laps[c] += loss
+                self.incident_done = True
+                if kind == "spin":
+                    new_cars[c] = replace(
+                        new_cars[c],
+                        wear=min(1.0, new_cars[c].wear + p.incidents.spin_wear),
+                    )
+                else:
+                    self.must_pit = True
             if pitted[c]:
                 self.stop_laps[c].append(self.lap)
         before = self._position()

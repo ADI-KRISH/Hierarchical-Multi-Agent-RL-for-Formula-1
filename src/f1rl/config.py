@@ -790,6 +790,29 @@ class WeatherParams:
 
 
 @dataclass(frozen=True)
+class StrategyIncidentParams:
+    """Our car's own mishaps in `StrategyEnv`: a spin or a puncture on one lap.
+    Scenario settings, uncalibrated: no F1 figure. FastF1 lap times around real
+    spins and punctures could calibrate the time losses.
+    """
+
+    # Share of races in which our car has one incident (0 = never).
+    chance: float = 0.0
+    # Of those, the share that are punctures (the rest are spins).
+    puncture_share: float = 0.5
+    # The incident lap, drawn as this share of the race distance.
+    lap_range: tuple[float, float] = (0.1, 0.85)
+    # Spin: seconds lost on that lap, and tyre wear added (a flat spot).
+    spin_loss_range: tuple[float, float] = (6.0, 15.0)
+    spin_wear: float = 0.05
+    # Puncture: seconds lost limping back to the pits on that lap; the car must
+    # then stop on the next lap (the Strategy Agent picks the compound; if it does
+    # not stop, the stop is forced onto `forced_compound`).
+    puncture_loss_range: tuple[float, float] = (15.0, 30.0)
+    forced_compound: str = "hard"
+
+
+@dataclass(frozen=True)
 class StrategyRewardParams:
     """Reward of `StrategyEnv`. Simulation design choices."""
 
@@ -884,6 +907,9 @@ class StrategyParams:
     grip_step: float = 0.01
     fuel_points: int = 5
     reward: StrategyRewardParams = StrategyRewardParams()
+    # Our car's spins and punctures; with chance > 0 the observation adds
+    # `INCIDENT_OBS_SIZE` inputs.
+    incidents: StrategyIncidentParams = StrategyIncidentParams()
 
     def compound(self, name: str) -> CompoundParams:
         if name not in TYRES:

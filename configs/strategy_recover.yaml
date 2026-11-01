@@ -1,0 +1,57 @@
+# RECOVERY FROM A SPIN OR A PUNCTURE (2026-11-01): as strategy_fast_win.yaml
+# (1% faster car, better overtaker, from 10th), but in every race our car has one
+# incident on a random lap (10-85% of the race): a spin (6-15 s lost, a flat spot
+# adds 5% tyre wear) or a puncture (15-30 s lost limping to the pits, then a stop it
+# must make next lap). Incident numbers are scenario settings, not F1 data.
+# Reward: the win still dominates (+10), and when the win is gone each place
+# behind the winner costs 1, so the agent claws back as many places as it can.
+#
+strategy: true
+
+run:
+  name: strategy_recover
+  seed: 0
+  total_timesteps: 1500000    # laps, summed over all envs (~60 laps a race)
+  n_envs: 4
+  eval_every_steps: 50000
+  eval_races: 30
+  train_tracks: train
+  eval_tracks: validation
+  driver_profile: configs/driver_profiles/defend_v2.json
+  subproc: true
+  select_by: position
+  stay_out_prior: 5.0
+
+env:
+  n_cars: 10
+  pit_loss_s: 22.0
+  rivals: baseline
+  rival_stop_jitter: 0.05
+  car_pace_spread: 0.0
+  our_pace: 1.01
+  grid_slot: 10
+  attack_skill_s: 3.4
+  incidents:
+    chance: 1.0
+    puncture_share: 0.5
+  reward:
+    time_weight: 0.0
+    position_weight: 0.0
+    finish_weight: 1.0
+    rule_penalty: 10.0
+    win_bonus: 10.0
+
+baseline:
+  stints: [medium, hard]
+  stop_fractions: [0.45]
+  push_index: 2
+  max_wear: 0.8
+
+ppo:
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 256
+  n_epochs: 10
+  gamma: 0.995
+  gae_lambda: 0.95
+  ent_coef: 0.01

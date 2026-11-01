@@ -424,7 +424,7 @@ def strategy_curves() -> None:
         "validation win rate (30 races)",
         "Strategy Agent learning curves (dotted = rule-based plan)",
     )
-    ax.legend(fontsize=8, loc="lower right")
+    ax.legend(fontsize=8, loc="upper left")
     save(fig, "fig6_strategy_learning_curves.png")
 
 
@@ -467,7 +467,7 @@ def seed_band() -> None:
         "validation win rate (30 races)",
         "Strategy Agent (strategy_all, 1% car): stability across seeds",
     )
-    ax.legend(fontsize=8, loc="lower right")
+    ax.legend(fontsize=8, loc="upper left")
     save(fig, "fig7_strategy_seeds.png")
 
 
@@ -517,6 +517,162 @@ def lap_table() -> None:
     save(fig, "fig9_held_out_lap_gaps.png")
 
 
+# --- model figures (drawn from the simulator's own functions) ---------------------
+
+
+def track_line() -> None:
+    """Optimal line on a held-out circuit, coloured by limit speed."""
+    from f1rl.config import EXAMPLE_CAR, RaceEnvParams
+    from f1rl.envs.racetrack import load_tum_track
+    from f1rl.models.raceline import optimal_line
+
+    fig, axes = plt.subplots(1, 2, figsize=(9, 4.2))
+    for ax, name in zip(axes, ("Suzuka", "Spa"), strict=True):
+        track = load_tum_track(name)
+        env = RaceEnvParams()
+        line = optimal_line(
+            track, EXAMPLE_CAR, env.car_half_width_m + env.line_safety_m
+        )
+        nx, ny = -np.sin(track.heading), np.cos(track.heading)
+        for side, sign in ((track.w_left, 1), (track.w_right, -1)):
+            ax.plot(
+                track.x + sign * side * nx,
+                track.y + sign * side * ny,
+                color=GREY,
+                lw=0.6,
+            )
+        sc = ax.scatter(
+            line.x, line.y, c=3.6 * line.speed, s=1.5, cmap="viridis", vmin=60
+        )
+        ax.set_aspect("equal")
+        ax.axis("off")
+        ax.set_title(
+            f"{name}: limit lap {line.lap_time_s:.1f} s "
+            f"(centre line {line.centre_lap_time_s:.1f} s)",
+            fontsize=9,
+        )
+    cb = fig.colorbar(sc, ax=axes, shrink=0.7)
+    cb.set_label("limit speed on the line (km/h)")
+    fig.savefig(OUT / "fig10_track_line.png", dpi=160, bbox_inches="tight")
+    plt.close(fig)
+    print("wrote", OUT / "fig10_track_line.png")
+
+
+def tyre_models() -> None:
+    """Tyre grip against wear and time, and wet-weather grip."""
+    from f1rl.config import StrategyParams, TireParams, WeatherParams
+    from f1rl.models.tire import tire_grip
+    from f1rl.models.weather import wet_grip
+
+    tp, sp, wp = TireParams(), StrategyParams(), WeatherParams()
+    fig, axes = plt.subplots(1, 3, figsize=(11, 3.3))
+    w = np.linspace(0, 1, 200)
+    axes[0].plot(w, [tire_grip(tp, x) for x in w], color=BLUE)
+    style(axes[0], "tyre wear (0 new, 1 gone)", "grip multiplier", "(a) Grip vs wear")
+    t = np.linspace(0, 4500, 300)
+    for name, c in (("soft", RED), ("medium", ORANGE), ("hard", GREY)):
+        comp = getattr(sp, name)
+        g = [comp.grip * tire_grip(tp, min(1.0, x / comp.life_s)) for x in t]
+        axes[1].plot(t / 60, g, color=c, label=name)
+    axes[1].legend(fontsize=8)
+    style(axes[1], "minutes driven at push 0.5", "grip multiplier", "(b) Compounds")
+    for name, c in (("soft", ORANGE), ("intermediate", GREEN), ("wet", BLUE)):
+        axes[2].plot(
+            w,
+            [wet_grip(wp, name, x) for x in w],
+            color=c,
+            label="slick" if name == "soft" else name,
+        )
+    axes[2].legend(fontsize=8)
+    style(axes[2], "track wetness", "grip multiplier", "(c) Rain")
+    save(fig, "fig11_tyre_models.png")
+
+
+def pass_curves() -> None:
+    """Measured attack / defend curves of the driver profile."""
+    from f1rl.driver_profile import load_profile
+
+    prof = load_profile(ROOT / "configs" / "driver_profiles" / "defend_v2.json")
+    adv = np.linspace(-2, 10, 300)
+    fig, ax = plt.subplots(figsize=(6.5, 3.4))
+    ax.plot(
+        adv,
+        [prof.attack.probability(a) for a in adv],
+        color=BLUE,
+        label=f"we attack ({prof.attack.battles} battles)",
+    )
+    ax.plot(
+        adv,
+        [prof.attack.probability(a + 3.4) for a in adv],
+        color=BLUE,
+        ls="--",
+        label="we attack, scenario skill +3.4 s",
+    )
+    ax.plot(
+        adv,
+        [prof.defend.probability(a) for a in adv],
+        color=ORANGE,
+        label=f"rival attacks us ({prof.defend.battles} battles)",
+    )
+    ax.axhline(0.5, color=GREY, lw=0.6, ls=":")
+    style(
+        ax,
+        "attacker pace advantage (s per lap)",
+        "P(pass within the lap)",
+        "Pass probabilities measured from the trained driver",
+    )
+    ax.legend(fontsize=8)
+    save(fig, "fig12_pass_curves.png")
+
+
+def race_trace() -> None:
+    """Place per lap in one seeded held-out safety-car race (Suzuka)."""
+    traces = sorted(DATA.glob("race_trace_suzuka_sc_*.json"))
+    first = json.loads(traces[0].read_text())
+    runs = [("rule-based plan", first["baseline"], ORANGE, "-")]
+    styles = [(BLUE, "-"), (GREEN, "--")]
+    for path, (c, ls) in zip(traces, styles, strict=False):
+        label = path.stem.replace("race_trace_suzuka_sc_", "agent, ")
+        runs.append((label, json.loads(path.read_text())["agent"], c, ls))
+    fig, ax = plt.subplots(figsize=(8, 3.6))
+    sc = [h["lap"] for h in first["baseline"]["history"] if h["neutral"] == "sc"]
+    if sc:
+        ax.axvspan(min(sc) - 0.5, max(sc) + 0.5, color=GREY, alpha=0.2, lw=0)
+        ax.text(min(sc) - 0.3, 6.0, "safety\ncar", fontsize=8, color=GREY)
+    for label, run, c, ls in runs:
+        h = run["history"]
+        laps = [x["lap"] for x in h]
+        ax.plot(
+            laps,
+            [x["position"] for x in h],
+            color=c,
+            ls=ls,
+            lw=1.6,
+            label=f"{label}: P{run['position']}, {run['stops']} stop(s)",
+        )
+        for x in h:
+            if x["pit"]:
+                ax.plot(x["lap"], x["position"], "o", color=c, ms=6)
+                ax.annotate(
+                    x["pit"][0].upper(),
+                    (x["lap"], x["position"]),
+                    textcoords="offset points",
+                    xytext=(4, 4),
+                    fontsize=8,
+                    color=c,
+                )
+    ax.invert_yaxis()
+    ax.set_yticks(range(1, 11))
+    style(
+        ax,
+        "lap",
+        "place",
+        f"Held-out race at {first['track']} with a safety car (dots: pit stops)",
+    )
+    ax.legend(fontsize=8, loc="upper left")
+    save(fig, "fig13_race_trace.png")
+
+
 if __name__ == "__main__":
     OUT.mkdir(parents=True, exist_ok=True)
     rl_loop()
@@ -528,3 +684,7 @@ if __name__ == "__main__":
     seed_band()
     held_out_bars()
     lap_table()
+    track_line()
+    tyre_models()
+    pass_curves()
+    race_trace()

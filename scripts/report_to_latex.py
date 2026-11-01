@@ -22,16 +22,6 @@ TITLE = (
     "Safety-Shielded Hierarchical Reinforcement Learning for Formula~1: "
     "A Move-Level Racing Driver and a Lap-Level PPO Race Strategist"
 )
-TABLE_CAPTIONS = [
-    "Training hyperparameters of the four learning set-ups",
-    "Success rates on the held-out circuits",
-    "Convergence speed and sample efficiency of the Strategy Agent (validation)",
-    "Stability across three seeds (held-out circuits, 200 races per case)",
-    "Computational cost",
-    "Driver Agent compared with baseline methods (held-out circuits)",
-    "Strategy Agent compared with baseline methods (held-out races)",
-    "Ablation study",
-]
 PREAMBLE = r"""\documentclass{ieeeaccess}
 \usepackage{cite}
 \usepackage{amsmath,amssymb,amsfonts}
@@ -56,11 +46,16 @@ UNICODE = {
     "–": "--",
     "—": "---",
 }
-WIDE_TABLES = {0, 3, 5, 6, 7}
+# Tables with at least this many columns span both columns; so do these captions.
+WIDE_COLUMNS = 5
+WIDE_TABLES = {"Ablation study", "Development stages and what each changed"}
 WIDE_FIGS = {
     "fig2_pipeline",
     "fig3_sac_learning_curve",
     "fig4_tactical_reward_ablation",
+    "fig10_track_line",
+    "fig11_tyre_models",
+    "fig13_race_trace",
 }
 
 
@@ -90,17 +85,17 @@ def cite(tex: str) -> str:
     return re.sub(r"\[(\d+)\](?:,\s*\[(\d+)\])*", repl, tex)
 
 
-def table(lines: list[str], idx: int) -> str:
+def table(lines: list[str], idx: int, caption: str) -> str:
     rows = [[c.strip() for c in ln.strip().strip("|").split("|")] for ln in lines]
     head, body = rows[0], rows[2:]
     n = len(head)
-    wide = idx in WIDE_TABLES
+    wide = n >= WIDE_COLUMNS or caption in WIDE_TABLES
     env = "table*" if wide else "table"
     width = "\\textwidth" if wide else "\\columnwidth"
-    spec = ">{\\raggedright\\arraybackslash}p{0.22\\linewidth}" + "X" * (n - 1)
+    spec = ">{\\raggedright\\arraybackslash}X" * n
     out = [
         f"\\begin{{{env}}}[!t]",
-        f"\\caption{{{TABLE_CAPTIONS[idx]}}}",
+        f"\\caption{{{inline_md(caption)}}}",
         f"\\label{{tab:{idx + 1}}}",
         "\\centering\\footnotesize",
         f"\\begin{{tabularx}}{{{width}}}{{{spec}}}",
@@ -158,34 +153,40 @@ def main() -> None:
         body,
     )
 
-    # pseudocode
+    # pseudocode: ```Algorithm N: title ...``` blocks
     def algo(m: re.Match[str]) -> str:
-        code = m.group(1).strip("\n")
+        code = m.group(0)[4:-3].strip("\n")
+        num, title = re.match(r"Algorithm (\d+): (.*)", code).groups()  # type: ignore[union-attr]
         return raw(
             "\\begin{figure*}[!t]\n\\footnotesize\n\\begin{verbatim}\n"
             + code
-            + "\n\\end{verbatim}\n\\caption{Pseudocode of the hierarchical training "
-            "procedure.}\n\\label{alg:train}\n\\end{figure*}"
+            + f"\n\\end{{verbatim}}\n\\caption{{{title}.}}\n\\label{{alg:{num}}}\n\\end{{figure*}}"
         )
 
-    body = re.sub(r"```\n(Algorithm 1.*?)```", algo, body, flags=re.S)
+    body = re.sub(r"```\nAlgorithm \d+:.*?```", algo, body, flags=re.S)
 
-    # tables
+    # tables, each preceded by a "Table: caption" paragraph
     lines = body.split("\n")
     out: list[str] = []
     i = idx = 0
+    caption = ""
     while i < len(lines):
-        if lines[i].startswith("|"):
+        if lines[i].startswith("Table: "):
+            caption = lines[i][len("Table: ") :].strip()
+            i += 1
+        elif lines[i].startswith("|"):
             j = i
             while j < len(lines) and lines[j].startswith("|"):
                 j += 1
-            out.append(table(lines[i:j], idx))
+            out.append(table(lines[i:j], idx, caption))
             idx += 1
             i = j
         else:
             out.append(lines[i])
             i += 1
     body = "\n".join(out)
+    # table numbers written in the text -> \ref
+    body = re.sub(r"Table (\d+)", r"Table~\\ref{tab:\1}", body)
 
     # headings: drop manual numbers; intro subsections go under \section{Introduction}
     body = re.sub(r"^(#+) (\d+(\.\d+)*\.?) ", r"\1 ", body, flags=re.M)

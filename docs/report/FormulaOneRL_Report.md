@@ -197,6 +197,31 @@ incidents at the same time.
 policy when it is potential-based [30]. Behaviour cloning [31] provides warm starts
 but needs action labels, which public F1 data lacks.
 
+**Summary of prior approaches.** Table 1 places the main lines of prior work side
+by side. Two patterns stand out. On the driving side, the strongest learned results
+[13], [14], [19] handle safety through penalties in the reward rather than through
+a component that can overrule an action, and they optimise lap time or overtaking
+with no strategist above them. On the strategy side, the learned strategists [10],
+[27], [28] take driving performance as a given lap-time model, so whether the
+driver can actually carry out the chosen plan lies outside their scope. Our system
+sits between these two lines and connects them.
+
+Table: Positioning of related work
+
+| Work | Decision level | Method | Safety handled by | Opponents |
+|---|---|---|---|---|
+| Liniger et al. [11] | Driving | Model predictive contouring control | Constraints in the optimiser | Scale cars |
+| Heilmeier et al. [12] | Driving | Minimum-curvature line and tracking control | Controller limits | None |
+| Fuchs et al. [13] | Driving | Soft actor-critic, end to end | Reward penalties | None (time trial) |
+| Song et al. [19] | Driving | Soft actor-critic with a curriculum | Reward penalties | Scripted cars |
+| Wurman et al. [14] | Driving | Off-policy deep RL, scenario mix | Reward penalties | Human and AI drivers |
+| Thakkar et al. [20] | Driving | Game planner over a multi-agent RL controller | Rules in the planner | Head-to-head rivals |
+| Heilmeier et al. [8] | Strategy | Monte-Carlo race simulation | Not applicable | Simulated field |
+| Heilmeier et al. [10] | Strategy | Neural networks trained on past decisions | Not applicable | Simulated field |
+| Thomas et al. [27] | Strategy | Deep RL strategist | Not applicable | Simulated field |
+| Fieni et al. [28] | Strategy | Multi-agent RL with self-play | Not applicable | Learned strategists |
+| This work | Both | PPO over race-craft options; PPO strategist on a measured driver | Bilateral predictive shield | Scripted, RL-trained and frozen-self cars; rule-based field |
+
 **Gap and positioning.** Existing work either drives one car very well without an
 explicit safety guarantee, plans strategy with a fixed driver model, or needs
 large compute. Our approach is different in three ways: the driver acts at the
@@ -259,6 +284,38 @@ than claimed F1 figures.
 and the "guard" defenders that make one legal move to the inside before a braking
 zone; RL-trained defenders and frozen copies of our own driver are also used.
 
+*Pace reference.* Fig. 3 shows the optimal line on two held-out circuits. The model
+car reaches its 5 g limits in every corner and has no load transfer, so its limit
+lap is quicker than a real F1 lap (76.2 s at Suzuka). All pace results are
+therefore reported as a gap to this limit lap in the same physics, never as
+absolute lap times compared with real races. Table 2 lists the main constants and
+marks which are reported F1 figures and which are our own design choices.
+
+![Optimal line on two held-out circuits.](figures/fig10_track_line.png){width=100%}
+
+*Fig. 3. Minimum-curvature line on Suzuka and Spa, coloured by the limit speed the
+friction ellipse allows at each point; grey lines are the track edges. In the same
+physics, the optimal line is 6.9 s quicker than the centre line at Suzuka and 6.7 s
+quicker at Spa.*
+
+Table: Main simulator constants (R = reported F1 figure, D = design choice)
+
+| Quantity | Value | Source |
+|---|---|---|
+| Car mass | 798 kg | R: FIA minimum weight |
+| Peak lateral / braking / traction acceleration | 5 g / 5 g / 1.5 g | R: reported F1 figures |
+| Top speed | 97 m/s (about 350 km/h) | R |
+| Car length and width | 5.5 m and 2.0 m | D |
+| Physics step / control step / move decision | 0.02 s / 0.1 s / 0.5 s | D |
+| Slipstream range and drag reduction | 80 m, 12% | D |
+| Dirty-air range and grip loss | 25 m, 4% | D |
+| Tyre grip against wear $w$ | $1-0.10w-0.15w^6$ | D |
+| Shield horizon and time step | 2.5-3.0 s, 0.05 s | D |
+| Shield margins along / across the track | 1.0 m / 0.3 m | D |
+| Pit-stop time loss: green / SC / VSC | 22 s / 12 s / 14 s | D |
+| Race distance | fewest laps covering 305 km | R: Sporting Regulations |
+| Fuel at the start | 110 kg | R: Technical Regulations |
+
 ### 3.2.2 State space
 
 *Driver Agent (75 inputs, all scaled to roughly $[-1,1]$).* Speed, lateral offset
@@ -274,6 +331,27 @@ the lap-time delta of each fresh compound against the current tyres, tyre life
 left against laps to go, the pit window per compound, where a stop would rejoin,
 rivals' compounds and tyre ages, safety-car and VSC flags, and incident flags
 (spun, punctured, time lost, must stop).
+
+Table 3 breaks the strategist's 46 inputs into groups. Every input is scaled to
+$[-1,1]$, and several of them are computed answers to questions a race engineer
+would ask (where would a stop now rejoin, could a fresh tyre reach the flag)
+rather than raw state. In early runs without these derived inputs the agent did not
+discover the undercut, because the relation between a stop and the resulting
+position had to be learned from the raw gaps alone.
+
+Table: Observation of the Strategy Agent (46 inputs)
+
+| Group | Inputs | Count |
+|---|---|---|
+| Race progress | Laps done and laps left, as shares of the race | 2 |
+| Position | Place; gaps to the cars ahead and behind; gap to the leader | 4 |
+| Own car | Compound (one-hot); tyre wear; tyre age; fuel; stops; last lap against the reference lap | 8 |
+| Rules and costs | Two-compound rule met; each compound used so far; pit loss relative to a lap | 5 |
+| Nearby rivals | Tyre wear, tyre age and stops (relative to ours) of the cars ahead and behind; compound of the car ahead | 7 |
+| Undercut | Place and gaps to the neighbours if we stopped this lap | 3 |
+| Tyre economics | Lap time a fresh soft, medium or hard would gain; our tyre pace against the neighbours'; tyre life left against laps to go; whether each fresh compound could reach the flag | 9 |
+| Incidents | Spun; punctured; time lost; stop required | 4 |
+| Neutralisation | Safety car; VSC; laps neutralised so far; current pit loss | 4 |
 
 ### 3.2.3 Action space
 
@@ -326,6 +404,77 @@ $\pm 30$ at the end of a section battle.
 0.1 times total race time, plus $+20$ for a legal win at the flag and $-50$ if the
 car never used two dry compounds.
 
+*Design rationale.* Each driver term answers a failure we observed. The progress
+term alone produced a fast but timid driver, so the pass bonus pays for the
+outcome we want. A bonus paid at the moment of the pass was exploited by passing
+and being re-passed, so it is paid only after the new order holds, and a lost place
+costs the same amount. The gap term gives a dense signal while the car closes on a
+rival, which a bonus that arrives tens of seconds later cannot. The dirty-driving
+and shield penalties discourage moves that are legal only because the shield
+rescues them. The strategist's race-time term is dense and equals the objective of
+finishing as early as possible; the win bonus breaks ties in favour of a plan that
+takes the lead, and the large rule penalty makes an illegal one-compound race never
+worth it. None of these terms is potential-based [30], so each can change the optimal
+policy; this is intended, because "finish early" and "finish first" are different
+goals, and the bonus states which one we prefer.
+
+### 3.2.6 Tyre, fuel and weather models
+
+Tyre wear $w\in[0,1]$ grows with how hard the tyre is worked. In the driving
+simulator the wear rate is $\dot w=u^2/L$, where $u\in[0,1]$ is the share of the
+friction ellipse in use and $L$ is the tyre life, and grip scales every acceleration
+limit by
+$$g(w)=1-0.10\,w-0.15\,w^{6},$$
+a steady fade followed by a late cliff (Fig. 4a). In the strategy simulator each dry
+compound has a new-tyre grip and a life: soft 1.00 and 1,900 s, medium 0.985 and
+3,000 s, hard 0.97 and 4,500 s of driving at medium push. A push level $p\in[0,1]$
+multiplies wear by $3^{\,p-0.5}$, so attacking for a lap spends tyre life that must
+be repaid later (Fig. 4b). These numbers are design choices that create a genuine
+trade-off between a quick, short-lived compound and a slow, durable one; they were
+not fitted to Pirelli data.
+
+Fuel enters through a lap-time table. For each circuit the limit lap on the optimal
+line is simulated over a grid of grip levels and fuel loads, and the strategy
+simulator interpolates in this table, so a car speeds up as fuel burns off and slows
+down as its tyres fade. Each car's lap is then scaled by the measured pace gap of
+our driver on that circuit (Section 3.4).
+
+Rain is a per-race wetness curve. A shower starts at a random point between 10% and
+70% of the race and lasts 10-40% of it; the track wets quickly and dries slowly.
+Slick grip falls linearly with wetness $\omega$ as $1-0.6\,\omega$, intermediates
+peak at 0.88 at $\omega=0.45$, and full wets reach 0.82 on a soaked track
+(Fig. 4c), so the crossover points lie near 30% and 70% wetness. Wet-weather tyres
+overheat and wear up to four times faster as the track dries. The strategist reads
+a noisy forecast of the wetness three and six laps ahead.
+
+![Tyre and weather models.](figures/fig11_tyre_models.png){width=100%}
+
+*Fig. 4. Tyre and weather models: (a) grip multiplier against tyre wear. (b) Grip of the three dry compounds
+against minutes of driving at medium push; the flat tail is a fully worn tyre.
+(c) Grip of slick, intermediate and full wet tyres against track wetness.*
+
+### 3.2.7 Opponents, events and scenarios
+
+Table 4 lists the other cars and race events. Every random draw (the circuit, the
+real start, the opponent, when an event happens and how long it lasts) comes from
+the environment's seeded generator. A battle or race is therefore identified by its
+seed and can be replayed exactly, which is how all paired comparisons in Section 4
+are made.
+
+Table: Opponents and race events used in training and testing
+
+| Element | Level | Behaviour |
+|---|---|---|
+| Backmarker, slow and equal cars | Driver | Path driver on the racing line at a fixed share of the grip |
+| Scripted defender and attacker | Driver | Rule-based race craft: cover the inside, attack from the slipstream |
+| Guard defenders (slow, mid, equal) | Driver | One legal move to the inside before a braking zone, then hold the line |
+| RL-trained defender | Driver | PPO policy trained to defend against our attacker |
+| Frozen self | Driver | A copy of our own driver used as attacker or defender |
+| Rule-based rival plans | Strategy | Medium-to-hard one-stop near 45% of the race, with seeded jitter of 5% |
+| Spin or puncture | Strategy | In 40% of races; a spin costs 6-15 s, a puncture 15-30 s plus a forced stop |
+| Safety car / VSC | Strategy | In 30% / 20% of races; 3-5 / 1-3 laps; laps 40% / 35% slower; cheaper stops |
+| Rain | Strategy | Rain scenarios only, as described in Section 3.2.6 |
+
 ## 3.3 RL Algorithm
 
 We use **Proximal Policy Optimization** (PPO) [32] for both agents. PPO suits the
@@ -372,6 +521,32 @@ needed: treating the fallback itself as a candidate, preventing brake-tests,
 rejecting off-road swerves beside a car, and widening steering authority and
 horizon.
 
+The procedure applied at every 0.1 s control step is summarised in Algorithm 2. Its
+key property is that the fallback it assumes is itself always one of the
+candidates, so a command judged safe now still leaves a safe command at the next
+step; this is what turns a local check into a guarantee over the whole battle,
+provided both cars are filtered.
+
+```
+Algorithm 2: Bilateral predictive safety shield for one pair of cars
+Input: states x_A (car behind) and x_B (car ahead); proposed commands u_A, u_B
+1:  H <- look-ahead of 2.5 s, extended up to 3.0 s when the cars close quickly
+2:  function SAFE(x_A, u_A, x_B, u_B):
+3:     integrate both cars over H: hold the commands for one decision,
+        then apply the fallback (A brakes hard, B keeps its lane and pace)
+4:     return the cars never come within one car length + 1.0 m along
+        and one car width + 0.3 m across the track
+5:  for the car behind first, then the car ahead (against A's final command):
+6:     if SAFE(proposed command): keep it              # clean racing is untouched
+7:     else try candidates in order of intrusiveness:
+          car behind:          brake; brake and steer away; the fallback
+          car beside or ahead: steer away; steer away and brake;
+                               if it was braking, brake less (no brake-test)
+8:        use the first candidate that is SAFE and stays on the road
+9:     if none is SAFE: use the on-road candidate with the most room;
+        leave the road only if that gives strictly more room
+```
+
 **Real-start curriculum.** About 1,200 real passes and defences (FastF1 for 2021-
 2022, OpenF1 for 2023 onwards) are converted to start states 400 m before the real
 pass location; 40% of training episodes begin from one. The held-out circuits'
@@ -386,6 +561,25 @@ from competent play.
 circuits (225 solo laps and 1,512 one-lap battles) to fit its pace gap and logistic
 pass and defend curves; the strategy simulator uses these numbers. When the win
 reward is sparse, the pit head's "stay out" logit is raised by 5 at initialisation.
+
+The pass curves have the logistic form
+$$P(\text{pass}\mid\Delta)=\frac{1}{1+\exp\!\big(-(\Delta-\delta)/\sigma\big)},$$
+where $\Delta$ is the attacker's pace advantage in seconds per lap. For our driver
+attacking, the fit over 648 battles gives $\delta=4.9$ s and $\sigma=1.71$ s; for
+rivals attacking our driver, 864 battles give $\delta=1.0$ s and $\sigma=1.15$ s
+(Fig. 5). The asymmetry is itself a finding: the learned driver defends well, but it
+needs almost five seconds a lap of extra pace for an even chance of passing within
+a lap. A strategist trained on this profile therefore learns to gain places in the
+pit lane rather than on track. The main strategy scenarios add an attack-skill
+offset of 3.4 s, which models a stronger overtaker; the measured curve itself is
+kept unchanged.
+
+![Measured pass probabilities.](figures/fig12_pass_curves.png){width=90%}
+
+*Fig. 5. Probability of a pass within one lap against the attacker's pace
+advantage, fitted to battles of the trained driver on all 25 circuits. Solid blue:
+our driver attacking; orange: rivals attacking our driver; dashed: the attack curve
+with the 3.4 s skill offset used in the main strategy scenarios.*
 
 ## 3.5 Algorithm Description
 
@@ -424,6 +618,33 @@ Stopping: fixed decision/lap budget; best checkpoint chosen on C_val only;
           C_test is touched once, at the end.
 ```
 
+## 3.6 Evaluation Protocol
+
+Four rules govern every number reported in Section 4.
+
+*Data separation.* The 25 circuits are split once into 17 training, 3 validation and
+5 held-out circuits. Training episodes use only training circuits, checkpoints are
+chosen on validation circuits, and held-out circuits are evaluated once after
+training ends, with no further tuning. The same split applies to the real-start
+library, so no real situation from a held-out circuit is seen during training.
+
+*Paired, seeded comparisons.* A baseline and a learned policy always run on the same
+seeded episodes (same circuit, grid, rival plans and event draws), so a difference
+in outcome comes from the decisions alone. Held-out strategy scorecards use 200
+races per case (seeds 70,000 to 70,199, circuits in rotation, 40 per circuit);
+driver scorecards use every real start or battle in the held-out set.
+
+*Strict success rules.* A pass counts only if our car is ahead at the end, the new
+order has held for 600 m (1 km in the strict re-scoring), and there was no contact,
+no wheel off the track and no dirty-driving step. A defence counts only if the car
+is still ahead and drove cleanly. A race win counts only if the car used two dry
+compounds.
+
+*Statistics.* For the three-seed study we report the mean, the sample standard
+deviation $\hat\sigma$ and a 95% confidence interval from the t-distribution with
+two degrees of freedom, $\pm 4.30\,\hat\sigma/\sqrt 3$. For single runs we give the
+count and the number of trials, so a binomial interval can be computed.
+
 # 4. Experimental Results
 
 ## 4.1 Experimental Setup
@@ -448,7 +669,41 @@ container, also without a GPU.
 environments. Every run writes its resolved configuration, seed and git commit next
 to its checkpoints.
 
+**Software practice.** The physics, tyre, race and shield models are pure
+functions (state in, state out) with unit tests; the repository has 341 tests,
+plus type checking and linting, all run before every merge. Every environment,
+training run and evaluation takes an explicit seed, and no part of the simulator
+draws unseeded random numbers. Hyperparameters and reward weights live in one YAML
+file per experiment, and each run stores its resolved configuration, seed and git
+commit with its checkpoints, so any number in this report can be traced to the code
+and settings that produced it.
+
+**Development stages.** The system was built in stages, each kept only once it ran
+and passed its tests (Table 5). The order matters for interpreting the results: the
+driver's action space was redesigned after the end-to-end SAC stage failed to reach
+competitive pace, and the strategist was started only after the driver could
+overtake and defend cleanly.
+
+Table: Development stages and what each changed
+
+| Stage | What was built | Outcome |
+|---|---|---|
+| Simulator | Segment track, point-mass car, first Gymnasium environment | Physics as tested pure functions |
+| Rule-based driver | Baseline driver and lap analytics | 2.3-3.0% off the limit lap |
+| First PPO driver | Throttle and steering on synthetic and six real circuits | Clean laps, 1-4% behind the baseline |
+| Real circuits and SAC | 25 TUM circuits, Frenet car, optimal line, SAC driver | Plateau 17-20% off the limit lap |
+| Move-level driver | Path planner, race-craft moves, PPO picks moves | Planner at +1.1%; overtaking and defending possible |
+| Real starts and shield | FastF1/OpenF1 starts, predictive shield | 0 contacts on 1,174 held-out real situations |
+| Passing physics | Slipstream, drag, shield in the tow | Scripted passes from 8 to 25 of 36 |
+| Section battles | Corner-by-corner battles, strict clean-racing rules | Learned driver level with the scripted tactician |
+| Sparring partners | Guard defenders and an RL-trained defender | 0 contacts in 480 guard battles |
+| Defend run | Main driver also trained to defend | Held-out defences 273 vs 264, passes 49 vs 29 |
+| Strategy Agent | Lap-by-lap race model, PPO on the measured driver | 72% wins vs 10%; rain 68% vs 0% |
+| Every race case | Fast car from tenth, spins, punctures, SC/VSC | 96.7% clean wins vs 91% (three seeds) |
+
 **Hyperparameters.**
+
+Table: Training hyperparameters of the four learning set-ups
 
 | Setting | SAC driver (baseline) | PPO driver (defend run 2) | PPO driver (real starts) | PPO strategist |
 |---|---|---|---|---|
@@ -493,19 +748,19 @@ success rate for battles, and win rate for strategy.
 
 ![SAC learning curve.](figures/fig3_sac_learning_curve.png){width=100%}
 
-*Fig. 3. Pure-RL SAC driver (seed 0). Left: share of evaluation laps completed;
+*Fig. 6. Pure-RL SAC driver (seed 0). Left: share of evaluation laps completed;
 right: mean gap to the optimal-line lap on completed laps. Pace improves quickly
 from +100% to about +25% within 0.3M decisions, then flattens at +13% to +20%; the
 scripted planner sits at +2.3%.*
 
 ![Strategy learning curves.](figures/fig6_strategy_learning_curves.png){width=90%}
 
-*Fig. 4. Strategy Agent validation win rate (30 races per point) for four scenario
+*Fig. 7. Strategy Agent validation win rate (30 races per point) for four scenario
 configurations. Dotted lines are the rule-based plan on the same races.*
 
 ![Defend run learning curve.](figures/fig5_defend_learning_curve.png){width=70%}
 
-*Fig. 5. Driver defend run 2: validation defences held (120, worn tyres) and clean
+*Fig. 8. Driver defend run 2: validation defences held (120, worn tyres) and clean
 section passes (270) over 0.5M decisions. Both curves are nearly flat: the
 behaviour-cloned start already sits close to what these moves allow.*
 
@@ -515,6 +770,8 @@ Success is defined per task. A *pass* succeeds when our car is ahead at the end 
 the battle, the new order has held for 600 m (1 km in later re-scoring), and there
 was no contact, no off-track and no dirty step. A *defence* succeeds when the car is
 still ahead and clean. A *race* succeeds when the car wins legally.
+
+Table: Success rates on the held-out circuits
 
 | Task (held-out circuits) | Proposed | Best baseline |
 |---|---|---|
@@ -539,7 +796,7 @@ Marina is excluded because SAC did not finish it (scripted: 2.5 s there).
 
 ![Lap gaps on held-out circuits.](figures/fig9_held_out_lap_gaps.png){width=85%}
 
-*Fig. 6. Gap to the optimal lap on each held-out circuit.*
+*Fig. 9. Gap to the optimal lap on each held-out circuit.*
 
 *Strategy (reward maximisation).* Per race, place regret is $\text{place}-1$
 (distance from the best possible result). In the fastest-car, win-only scenario the
@@ -555,6 +812,8 @@ race-time regret, against 1,125 s for the rule-based plan (measured against seed
 We measure the number of environment steps until the validation win rate first
 exceeds the rule-based plan's, and until it reaches 90% of its own best.
 
+Table: Convergence speed and sample efficiency of the Strategy Agent (validation)
+
 | Strategy configuration | Baseline win rate | Steps to beat baseline | Steps to 90% of best | Best win rate |
 |---|---|---|---|---|
 | Fast car, win-only reward | 93% | 100k laps (≈1.7k races) | 100k | 100% |
@@ -566,7 +825,7 @@ The driver is far less sample-efficient: SAC needed about 0.3M decisions (8 h of
 simulated driving) just to finish laps reliably, and never matched the scripted
 planner within 2M decisions. The move-level PPO driver starts from a
 behaviour-cloned policy, so its first evaluation is already competent; the real-
-start run reached its attack plateau within 0.2M decisions (Fig. 8).
+start run reached its attack plateau within 0.2M decisions (Fig. 12).
 
 ### 4.2.5 Stability across seeds
 
@@ -578,9 +837,11 @@ includes the minimum-stint rule (no new stop within five laps of the last).
 
 ![Seed stability.](figures/fig7_strategy_seeds.png){width=85%}
 
-*Fig. 7. Validation win rate for three seeds: individual runs (grey), mean (blue)
+*Fig. 10. Validation win rate for three seeds: individual runs (grey), mean (blue)
 and one standard deviation (band). All three seeds pass the rule-based plan's 57%
 within 0.1-0.25M laps and settle at 60-80%.*
+
+Table: Stability across three seeds (held-out circuits, 200 races per case)
 
 | Held-out case (200 races) | Seed 0 | Seed 1 | Seed 2 | Mean ± s.d. | 95% CI | Rule-based |
 |---|---|---|---|---|---|---|
@@ -606,6 +867,8 @@ should not be reported alone.
 
 ### 4.2.6 Computational efficiency
 
+Table: Computational cost
+
 | Item | Value |
 |---|---|
 | SAC driver training (2.0M decisions) | 3 h 29 min, laptop CPU, ≈165 decisions/s shared |
@@ -628,6 +891,37 @@ For racing we report: **gap to optimal lap (%)**, **contacts**, **off-tracks**,
 rule), **stops per race**, **undercuts made and suffered**, and **on-track passes per
 race**. Generalisation is always reported on the five unseen circuits; robustness
 to opponents is reported against scripted, RL-trained and frozen-self opponents.
+
+Table 11 gives the strategy metrics behind the win rates of Section 4.2.5, and
+Table 12 splits the wins by circuit. Three patterns stand out. First, the agent's
+clean-race gain comes from the circuits where the rule-based plan sometimes loses
+(Suzuka, Silverstone, Yas Marina); where the plan already wins every race (Sao
+Paulo) there is nothing to gain. Second, recovery after a spin varies widely by
+circuit, from 4% at Suzuka to 63% at Sao Paulo. A spin costs a similar number of
+seconds everywhere, but on Sao Paulo's short lap there are more laps left in which
+to recover it, which is the likely reason. Third, the safety-car weakness is
+concentrated at Suzuka and Spa, and it shows up in the stop count: the agent makes
+about 1.5 stops per safety-car race against exactly one for the plan.
+
+Table: Strategy Agent race statistics on held-out circuits (agent mean of three seeds / rule-based; 200 races per case)
+
+| Case | Wins | Podiums | Mean place | Stops per race |
+|---|---|---|---|---|
+| Clean | 96.7% / 91.0% | 98.3% / 99.0% | 1.16 / 1.14 | 1.01 / 1.00 |
+| After a spin | 29.8% / 4.5% | 45.8% / 21.0% | 5.18 / 6.64 | 1.42 / 1.00 |
+| After a puncture | 0% / 0% | 1.2% / 0% | 9.55 / 9.94 | 2.01 / 1.65 |
+| Safety car | 78.0% / 89.5% | 87.2% / 97.0% | 1.88 / 1.19 | 1.53 / 1.00 |
+| VSC | 87.3% / 89.0% | 92.2% / 98.0% | 1.60 / 1.19 | 1.06 / 1.00 |
+
+Table: Held-out win rate (%) by circuit (agent mean of three seeds / rule-based; 40 races per circuit and case)
+
+| Circuit | Clean | After a spin | Safety car | VSC |
+|---|---|---|---|---|
+| Suzuka | 94.2 / 82.5 | 4.2 / 0.0 | 62.5 / 82.5 | 79.2 / 82.5 |
+| Spa | 93.3 / 92.5 | 17.5 / 2.5 | 70.8 / 82.5 | 77.5 / 87.5 |
+| Sao Paulo | 100.0 / 100.0 | 63.3 / 17.5 | 95.8 / 97.5 | 98.3 / 100.0 |
+| Silverstone | 96.7 / 87.5 | 24.2 / 2.5 | 80.8 / 90.0 | 89.2 / 87.5 |
+| Yas Marina | 99.2 / 92.5 | 40.0 / 0.0 | 80.0 / 95.0 | 92.5 / 87.5 |
 
 ## 4.3 Results and Discussion
 
@@ -685,9 +979,31 @@ training or model selection. Strategy performance on held-out circuits was lower
 than on validation in the first pilot (place 4.20 vs 2.75), and similar in later
 runs; driver results transferred with no visible gap.
 
+**Result 6 - one race in detail.** Fig. 11 follows a single held-out race at
+Suzuka (the first race of the safety-car scorecard), run with the same seed for the
+rule-based plan and for the seed-0 agent. Both start tenth on mediums and both stop
+for hards on lap 25. The agent drives most of its first stint at a lower push level
+(0.25 against 0.5), so its tyres are less worn at the stop (wear 0.44 against 0.58
+on lap 20). When the safety car comes out on lap 35 the agent is third. It makes a
+second, cheaper stop on lap 36 for new hards and rejoins tenth, because under the
+safety car the field runs nose to tail and even a cheap stop costs every place. The
+rule-based plan stays out, moves up as the remaining rivals stop, leads from lap 42
+and wins. With fresh tyres the agent climbs back to fifth but runs out of laps, and
+its race time is 7.1 s longer. This race shows the safety-car weakness of
+Section 4.2.5 in concrete form: the stop is cheap in seconds, but the lost track
+position cannot be recovered with the driver's measured overtaking ability
+(Fig. 5).
+
+![One held-out race lap by lap.](figures/fig13_race_trace.png){width=100%}
+
+*Fig. 11. Place per lap in one seeded held-out race at Suzuka with a safety car
+(grey band). Dots mark pit stops and the letter the new compound.*
+
 ## 4.4 Comparison with Existing / Benchmark Methods
 
 *Driver.*
+
+Table: Driver Agent compared with baseline methods (held-out circuits)
 
 | Method | Gap to optimal ↓ | Clean passes (350) ↑ | Defences held (460) ↑ | Contacts ↓ | Unseen circuits | Train time ↓ |
 |---|---|---|---|---|---|---|
@@ -703,6 +1019,8 @@ runs; driver results transferred with no visible gap.
 
 *Strategist (held-out races, 1% faster car, starting tenth).*
 
+Table: Strategy Agent compared with baseline methods (held-out races)
+
 | Method | Win rate ↑ | Mean place ↓ | Legal ↑ | Unseen circuits | Decision time |
 |---|---|---|---|---|---|
 | Random policy | 0% | 10.0 | 95% | yes | - |
@@ -717,9 +1035,11 @@ for context, not as a direct numerical comparison.
 
 ![Reward ablation for the attacking driver.](figures/fig4_tactical_reward_ablation.png){width=100%}
 
-*Fig. 8. Real-start driver, run 1 (overtake bonus 20, entropy coefficient 0.01) vs
+*Fig. 12. Real-start driver, run 1 (overtake bonus 20, entropy coefficient 0.01) vs
 run 2 (bonus 100, entropy 0.03, plus shield fixes). Run 1 stops attacking within
 0.2M decisions; run 2 attacks on 37/43 starts but defends worse.*
+
+Table: Ablation study
 
 | Component removed or changed | Effect (validation unless noted) |
 |---|---|
@@ -747,7 +1067,7 @@ one corner. Against the RL-trained defender the learned attacker passed 14 of 17
 times against 15 for the scripted tactician, so a stronger opponent lowers the
 success rate of both drivers alike.
 *Failures and events:* the strategist was evaluated separately on clean races,
-spins, punctures, safety cars and VSCs (Fig. 9). With a 3% faster car it won
+spins, punctures, safety cars and VSCs (Fig. 13). With a 3% faster car it won
 99.5-100% in every case except punctures (56% vs 44% for the rule-based plan).
 *Forecast error:* the rain agent reads a noisy 3- and 6-lap forecast and still
 pitted about one lap before rivals.
@@ -755,7 +1075,7 @@ pitted about one lap before rivals.
 
 ![Held-out wins by race case.](figures/fig8_strategy_held_out_cases.png){width=80%}
 
-*Fig. 9. Held-out wins by race case, 200 races each, 1% faster car (the single-seed model trained without the minimum-stint rule; the three-seed results with the rule are in Section 4.2.5).*
+*Fig. 13. Held-out wins by race case, 200 races each, 1% faster car (the single-seed model trained without the minimum-stint rule; the three-seed results with the rule are in Section 4.2.5).*
 
 **Sensitivity (parameter changes).** With car pace edges of 0.5%, 1% and 3%, the
 agent's advantage over the rule-based plan is largest where the race is close (1%:
@@ -800,6 +1120,23 @@ starts adds unseen *situations* drawn from real races.
   the defend scenario on held-out circuits succeeded 2/5; lap pace under the full
   tactical layer is +3.1% instead of the 1% target.
 
+**Threats to validity.**
+*Internal validity:* the baselines were written by the same team that designed the
+agents and the simulator. They were fixed before the held-out evaluation and never
+tuned on it, but a stronger hand-written plan, for example one that also brings its
+stop forward under a safety car, could narrow the strategy gaps.
+*Construct validity:* a win rate against a field of rule-based rivals measures how
+well the agent exploits those rivals, not how it would fare against teams that
+react to an undercut.
+*External validity:* tyre, pit and event constants are uncalibrated design values,
+so the learned plans (for example the timing of the undercut) should not be read as
+advice for real races.
+*Conclusion validity:* driver results rest on one seed, and the battle sets contain a
+few hundred episodes. The defence result (273 vs 264 of 460, 59.3% vs 57.4%) lies
+within binomial noise and should be read as "at least as good as" the line-holding
+baseline; the pass result (49 vs 29 of 350, 14.0% vs 8.3%) is about 2.4 standard
+errors apart and is more reliable.
+
 # 6. Conclusion and Future Work
 
 We studied racing as a two-timescale decision problem in which an F1 car must be
@@ -820,6 +1157,16 @@ reaching baseline level within 0.1-0.4 million laps. Across three seeds the
 clean-race and after-spin gains are stable (96.7 ± 1.5% and 29.8 ± 4.0% wins), while
 safety-car races expose a weakness of the race-time reward under the minimum-stint
 rule (78% vs 89.5%).
+
+Three lessons from this project apply beyond racing. First, the choice of action
+space mattered more than the choice of algorithm: the same compute that left a
+continuous-control agent 17-20% off the limit produced a competitive driver once the
+agent chose manoeuvres and a planner executed them. Second, a score is not a
+behaviour: the place-swapping exploit was invisible in the learning curve and was
+found only by watching replays, and it was fixed by changing what counts as
+success, not by tuning the learner. Third, a single seed can hide a weakness: the
+safety-car problem appeared only when the same configuration was trained three
+times.
 
 Future work follows from the limitations: calibrate tyre and pit constants from
 multi-race FastF1 stints; give the driver the push mode and attack/defend orders as

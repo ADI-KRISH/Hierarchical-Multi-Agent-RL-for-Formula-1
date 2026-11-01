@@ -42,9 +42,11 @@ class FixedPlan:
         lap: int,
         total_laps: int,
         wetness: float = 0.0,
+        neutral: bool = False,
     ) -> LapPlan:
         """The plan for lap ``lap`` (0-based) of ``total_laps``; ``wetness`` is the
-        track as it was on the last lap."""
+        track as it was on the last lap; ``neutral``: a safety car or VSC runs this
+        lap (a planned stop that is close is brought forward, it is cheap now)."""
         p = self.params
         push = strategy.push_levels[p.push_index]
         laps_left = total_laps - lap
@@ -70,8 +72,9 @@ class FixedPlan:
                     return LapPlan(push, nxt)
                 return LapPlan(push)
         stint = car.stops
+        early = strategy.neutral.rival_window if neutral and laps_left > 3 else 0.0
         if stint < len(p.stop_fractions) and lap >= round(
-            p.stop_fractions[stint] * total_laps
+            (p.stop_fractions[stint] - early) * total_laps
         ):
             return LapPlan(push, p.stints[stint + 1])
         if car.wear > p.max_wear and laps_left > 3:

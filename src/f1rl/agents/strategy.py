@@ -31,6 +31,7 @@ from f1rl.config import (
     EXAMPLE_CAR,
     TYRES,
     CompoundParams,
+    NeutralParams,
     StrategyBaselineParams,
     StrategyIncidentParams,
     StrategyParams,
@@ -92,6 +93,12 @@ class StrategyConfig:
                 if key in w:
                     w[key] = tuple(w[key])
             raw["weather"] = WeatherParams(**w)
+        if "neutral" in raw:
+            neu = dict(raw["neutral"])
+            for key in ("lap_range", "sc_laps", "vsc_laps"):
+                if key in neu:
+                    neu[key] = tuple(neu[key])
+            raw["neutral"] = NeutralParams(**neu)
         if "incidents" in raw:
             inc = dict(raw["incidents"])
             for key in ("lap_range", "spin_loss_range", "puncture_loss_range"):
@@ -154,7 +161,12 @@ def baseline_policy(env: StrategyEnv, obs: Any) -> Any:
             )
         return np.array([env.tyres.index(start) + 1, plan.params.push_index])
     lap = plan.plan(
-        env.params, env.cars[0], env.lap, env.total_laps, env.seen_wetness()
+        env.params,
+        env.cars[0],
+        env.lap,
+        env.total_laps,
+        env.seen_wetness(),
+        env.neutral_now() is not None,
     )
     pit = 0 if lap.pit_to is None else env.tyres.index(lap.pit_to) + 1
     return np.array([pit, plan.params.push_index])

@@ -1,0 +1,61 @@
+# WIN IN EVERY CASE (2026-11-01): the strategy_fast_win.yaml car and driver (1%
+# more grip, better overtaker, from 10th), but races also bring our car's spins
+# and punctures and safety car / VSC periods (rivals take a cheap stop under them).
+# User: "the strategy agent should calculate the fastest way to finish the race",
+# "wins in every category". Variant with a place term: minus race time (0.1 per second, so the
+# fastest way to the flag) plus +20 for a win and -1 per place behind the winner at the flag; the two-compound rule -50.
+# Reward before (strategy_fast_win): win +10 only. Incident and SC / VSC numbers
+# are scenario settings, not F1 data.
+#
+strategy: true
+
+run:
+  name: strategy_all_place
+  seed: 0
+  total_timesteps: 3000000    # laps, summed over all envs (~60 laps a race)
+  n_envs: 4
+  eval_every_steps: 50000
+  eval_races: 30
+  train_tracks: train
+  eval_tracks: validation
+  driver_profile: configs/driver_profiles/defend_v2.json
+  subproc: true
+  select_by: wins
+  stay_out_prior: 5.0
+
+env:
+  n_cars: 10
+  pit_loss_s: 22.0
+  rivals: baseline
+  rival_stop_jitter: 0.05
+  car_pace_spread: 0.0
+  our_pace: 1.01
+  grid_slot: 10
+  attack_skill_s: 3.4
+  incidents:
+    chance: 0.4
+    puncture_share: 0.5
+  neutral:
+    sc_chance: 0.3
+    vsc_chance: 0.2
+  reward:
+    time_weight: 0.1
+    position_weight: 0.0
+    finish_weight: 1.0
+    rule_penalty: 50.0
+    win_bonus: 20.0
+
+baseline:
+  stints: [medium, hard]
+  stop_fractions: [0.45]
+  push_index: 2
+  max_wear: 0.8
+
+ppo:
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 256
+  n_epochs: 10
+  gamma: 0.995
+  gae_lambda: 0.95
+  ent_coef: 0.01

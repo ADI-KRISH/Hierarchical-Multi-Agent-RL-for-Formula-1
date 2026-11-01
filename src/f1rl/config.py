@@ -813,6 +813,39 @@ class StrategyIncidentParams:
 
 
 @dataclass(frozen=True)
+class NeutralParams:
+    """Safety car (SC) and virtual safety car (VSC) periods in `StrategyEnv`.
+    Scenario settings, uncalibrated: no F1 figure. FastF1 lap and pit times
+    under real SC / VSC periods could calibrate them.
+    """
+
+    # Share of races with one SC period, and with one VSC period (not both).
+    sc_chance: float = 0.0
+    vsc_chance: float = 0.0
+    # The first neutralised lap, as a share of the race distance.
+    lap_range: tuple[float, float] = (0.05, 0.85)
+    # How many laps it lasts (inclusive range).
+    sc_laps: tuple[int, int] = (3, 5)
+    vsc_laps: tuple[int, int] = (1, 3)
+    # Every car's lap is the reference lap times this (everyone at the same pace).
+    sc_lap_factor: float = 1.4
+    vsc_lap_factor: float = 1.35
+    # A stop costs this much instead of `StrategyParams.pit_loss_s`: the field is
+    # slow, so less time is lost in the pit lane.
+    sc_pit_loss_s: float = 12.0
+    vsc_pit_loss_s: float = 14.0
+    # Behind the SC the field closes up: each lap a gap above sc_gap_s keeps only
+    # sc_keep of its excess. VSC keeps the gaps. Nobody passes on track.
+    sc_gap_s: float = 0.8
+    sc_keep: float = 0.3
+    # Tyres wear this share of a racing lap's wear on a neutralised lap.
+    wear_factor: float = 0.3
+    # Rule-based cars (rivals, our baseline) take a cheap stop under SC / VSC when
+    # their planned stop is at most this share of the race away.
+    rival_window: float = 0.15
+
+
+@dataclass(frozen=True)
 class StrategyRewardParams:
     """Reward of `StrategyEnv`. Simulation design choices."""
 
@@ -910,6 +943,9 @@ class StrategyParams:
     # Our car's spins and punctures; with chance > 0 the observation adds
     # `INCIDENT_OBS_SIZE` inputs.
     incidents: StrategyIncidentParams = StrategyIncidentParams()
+    # Safety car and VSC periods; with either chance > 0 the observation adds
+    # `NEUTRAL_OBS_SIZE` inputs.
+    neutral: NeutralParams = NeutralParams()
 
     def compound(self, name: str) -> CompoundParams:
         if name not in TYRES:

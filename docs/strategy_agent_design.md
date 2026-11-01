@@ -918,6 +918,56 @@ same average place (it takes more risk). A 3% car with that overtaker was too ea
 both strategies won every race. The driver thread reports the measured attack
 curve was mis-measured and fixes sim bugs; re-measure the driver after that.
 
+**Correction (2026-11-01):** in this sim our grip edge is worth less lap time than
+first written: 1% grip is ~0.3 s/lap, 3% ~0.9 s/lap, 0.5% ~0.15 s/lap on the
+held-out tracks (lap table at normal push on mediums).
+
+**Why the fast-car agents two-stopped.** In clean air our uncalibrated tyre model
+makes a two-stop 1-12 s faster than the best one-stop on four of the five held-out
+tracks (Suzuka is the exception: medium-hard one-stop is fastest). With today's
+measured overtaking, passing also looks costly, so the 3% agent pits on laps 2-4 to
+buy clean air. Real tyre numbers (FastF1, laptop) would settle the one-stop vs
+two-stop question; until then it is a property of the design values.
+
+**Fastest car, win only (2026-11-01, `strategy_fast_win.yaml`).** User ask: our
+car is the fastest and can overtake, start 10th, train to win and nothing else.
+1% more grip, `attack_skill_s 3.4`, grid 10. Reward: +10 for a win, -10 for
+breaking the two-compound rule, nothing else. A random policy pits on 3 laps in 4
+and never wins, so a win-only reward gives it nothing to learn from;
+`run.stay_out_prior 5` biases the untrained policy towards staying out (a starting
+prior, not a reward). Trained in the cloud (1.5M laps, 4 envs; validation wins
+100% from 150k laps). Held-out: **200/200 wins** (rule-based plan in the same car
+91%), average place 1.0 vs 1.11, 6.5 on-track passes a race. The plan it found is a
+medium-hard one-stop at ~35% of the race, 1-6 laps before the first rival stops
+(an undercut on the whole field), Save+ in clean air, Attack when a car is within
+reach.
+
+**Spin or puncture (2026-11-01, `strategy_recover.yaml`).**
+`StrategyParams.incidents` (`StrategyIncidentParams`, off by default): on one
+drawn lap (10-85% of the race) our car spins (6-15 s, +5% tyre wear for a flat
+spot) or gets a puncture (15-30 s limping to the pits, then a forced stop next
+lap; the agent picks the compound). Four extra observation inputs (spun,
+punctured, time lost, must stop). Scenario values, uncalibrated. Same car as
+above, an incident every race. A win-only reward (+10, -1 per place) did not
+learn (P10, pitting every lap); the dense recipe of `strategy_win.yaml` did.
+Held-out, 200 races:
+
+| | place | wins | podiums | after a spin: place / wins | after a puncture: place |
+|---|---|---|---|---|---|
+| rule-based | 8.1 | 3% | 13% | 6.7 / 5% | 9.9 |
+| **agent** | **6.9** | **14%** | **28%** | **5.1 / 25%** | 9.1 |
+
+After a late spin it pits next lap for fresh mediums and attacks; after an early
+one it keeps medium-hard and adds a late stop for mediums. A puncture (time lost +
+a stop = 40-50 s) cannot be won back with a 0.3 s/lap edge.
+
+**Racing line and driver modes on the replay page.** The replay page draws each
+held-out track's edges and the minimum-curvature racing line coloured by limit
+speed (`models.raceline.optimal_line`), runs a lap on it in real time, and puts
+the cars on that line. It also explains the five push modes the Strategy Agent
+sends (grip 92-95%, wear 0.58-1.73x Normal). The trained driver does not take a
+mode input yet; in the race sim the mode scales the driver's measured lap.
+
 **Plugging in the real driver later.** Two hooks: (1) replace each track's
 `LapTable` with one measured from the trained driver (lap time at each grip level
 and fuel load); (2) set `attack_skill_s` / `defend_skill_s` (or refit

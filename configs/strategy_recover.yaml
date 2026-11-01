@@ -3,8 +3,10 @@
 # incident on a random lap (10-85% of the race): a spin (6-15 s lost, a flat spot
 # adds 5% tyre wear) or a puncture (15-30 s lost limping to the pits, then a stop it
 # must make next lap). Incident numbers are scenario settings, not F1 data.
-# Reward: the win still dominates (+10), and when the win is gone each place
-# behind the winner costs 1, so the agent claws back as many places as it can.
+# Reward: the dense recipe of strategy_win.yaml (time 0.1/s, 1 per place gained,
+# 1 per place behind the winner at the flag, +20 for a win), so places clawed back
+# count. A first try with only win +10 and finish 1/place (sparse) never learned:
+# it sat at P10 pitting every lap (the place signal was too weak to find).
 #
 strategy: true
 
@@ -20,7 +22,6 @@ run:
   driver_profile: configs/driver_profiles/defend_v2.json
   subproc: true
   select_by: position
-  stay_out_prior: 5.0
 
 env:
   n_cars: 10
@@ -35,11 +36,11 @@ env:
     chance: 1.0
     puncture_share: 0.5
   reward:
-    time_weight: 0.0
-    position_weight: 0.0
+    time_weight: 0.1
+    position_weight: 1.0
     finish_weight: 1.0
-    rule_penalty: 10.0
-    win_bonus: 10.0
+    rule_penalty: 50.0
+    win_bonus: 20.0
 
 baseline:
   stints: [medium, hard]

@@ -1,0 +1,907 @@
+"""PPO for `TacticalEnv`: learns WHEN to attack or defend and WHICH move to make.
+
+Everything tunable comes from an experiment YAML (``configs/tactical.yaml``). A run
+writes into ``runs/<name>/``: ``config.yaml``, ``meta.json``, ``eval.csv`` (the
+scenario suite on the validation tracks at every evaluation), ``model_best.zip``
+(most scenarios won on the VALIDATION tracks; a contact-free evaluation always beats
+one with contact) and ``model_final.zip``.
+
+**Real starts** (`f1rl.real_starts`): with ``real_start_frac`` > 0, that share of
+training episodes starts from a real pass or defence on the track being driven
+(train-split races only), and the validation evaluation also replays the
+validation tracks' real starts. Turn on ``safety_filter`` in ``env`` so no car ever
+drives into another (`models.safety`); every evaluation reports contacts.
+
+Optionally the policy first imitates the rule-based `tactician` (behaviour cloning),
+so PPO starts from a driver that already passes backmarkers and improves from there.
+Track splits are the usual ones: train on `TUM_TRAIN`, choose on `TUM_VALIDATION`,
+judge on `TUM_HELD_OUT` (never trained on, never used to choose anything).
+"""
+
+import copy
+import csv
+import json
+import platform
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import asdict, dataclass, field, fields
+from pathlib import Path
+from typing import Any
+
+import gymnasium as gym
+import numpy as np
+import stable_baselines3
+import torch
+import yaml
+from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList
+from stable_baselines3.common.logger import configure
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
+
+from f1rl.agents.ppo import git_sha
+from f1rl.agents.racer import prepare_tracks, resolve_track_names
+from f1rl.agents.tactician import choose
+from f1rl.agents.tactics import MOVES, PULL_MOVES
+from f1rl.config import (
+    EXAMPLE_CAR,
+    OPPONENT_KINDS,
+    CarParams,
+    GuardParams,
+    RaceEnvParams,
+    SectionParams,
+    SimParams,
+)
+from f1rl.envs.opponents import wrap_gap
+from f1rl.envs.tactical_env import TacticalEnv
+from f1rl.real_starts import ROLES, RealStart, by_track, load_real_starts
+from f1rl.scenarios import SCENARIOS, pick, run_one, run_real
+from f1rl.sections import KINDS, Section, env_sections, section_options
+
+
+@dataclass(frozen=True)
+class TacticalRun:
+    name: str
+    seed: int
+    total_timesteps: int
+    n_envs: int
+    eval_every_steps: int
+    train_tracks: str | list[str] = "tum_train"
+    validation_tracks: str | list[str] = "tum_validation"
+    held_out_tracks: str | list[str] = "tum_held_out"
+    torch_threads: int = 4
+    # Behaviour cloning of the rule-based tactician before PPO: decisions to record
+    # and passes over them. 0 = PPO from scratch.
+    bc_decisions: int = 0
+    bc_epochs: int = 10
+    # Share of training episodes started from a real race situation (0 = none), and
+    # where the incident library is (relative to the project, or absolute).
+    real_start_frac: float = 0.0
+    incident_dir: str = "data/incidents"
+    # Which real starts to use: "attack" (a real pass to make) and/or "defend".
+    real_roles: list[str] = field(default_factory=lambda: ["attack", "defend"])
+    # At most this many real starts per validation track in each evaluation (spread
+    # evenly through the library), to keep evaluations quick.
+    real_eval_per_track: int = 40
+    # Self-play (GT Sophy's opponent population; Wurman et al., Nature 2022): this
+    # share of training episodes races a ``rival_*`` car driven by a frozen copy of
+    # the policy, taken every ``pool_every_steps`` (the last ``pool_size`` kept);
+    # the rest race the scripted opponents. 0 = scripted only.
+    rival_frac: float = 0.0
+    pool_every_steps: int = 100_000
+    pool_size: int = 10
+    # Start from an earlier model's weights (a .zip path; "" = fresh, then the
+    # behaviour cloning above if any).
+    init_model: str = ""
+    # Scale rewards by a running estimate of the return's spread (SB3 VecNormalize,
+    # rewards only): returns of hundreds with +-100 pass bonuses otherwise swamp the
+    # value function. Observations are left as they are, so saved models still run
+    # on the raw env.
+    normalize_reward: bool = False
+    # Step the training envs in their own processes (SB3 SubprocVecEnv) so a run
+    # uses several cores. Self-play needs the envs in this process (the rival pool
+    # lives here), so subproc runs must set rival_frac 0.
+    subproc: bool = False
+    # Section battles (`f1rl.sections`): this share of training episodes is one
+    # straight, braking zone or corner of a training track, started ``section_gap_m``
+    # behind one of ``section_opponents`` (a slower car); the pass must be done by
+    # the section's end. With ``section_priority`` the sections this env wins only
+    # some of the time are drawn more often (win rate tracked per section).
+    # Evaluations also run every validation-track section against each of
+    # ``section_eval_opponents``.
+    section_frac: float = 0.0
+    section_opponents: list[str] = field(default_factory=lambda: ["slow"])
+    section_gap_m: list[float] = field(default_factory=lambda: [6.0, 20.0])
+    section_priority: bool = True
+    section_eval_opponents: list[str] = field(default_factory=list)
+    section_eval_gap_m: float = 12.0
+    # Defender training (`agents.defender_rl`): battles per validation track (from
+    # this many points round the lap) at every evaluation...
+    eval_starts: int = 6
+    # ...and who it imitates first (``bc_decisions`` > 0): "tactician" (the
+    # rule-based defender) or "line" (never defend; the policy then has to learn
+    # when a defending move pays).
+    bc_teacher: str = "tactician"
+    # A trained defender (`agents.defender_rl`) as every ``rival_ahead*`` car, in
+    # training and evaluation: its saved model and the moves it picks among. It
+    # sees the plain observation layout (`TacticalEnv.rival_plain_obs`).
+    defender_model: str = ""
+    defender_moves: list[str] = field(
+        default_factory=lambda: ["line", "cover", "inside"]
+    )
+    # Defend battles for the main driver: this share of section battles starts with
+    # our car AHEAD and one of ``section_attackers`` ``section_gap_m`` behind, in a
+    # section of one of ``section_defend_kinds`` (the attack builds on a straight or
+    # into a braking zone). Our tyres start with wear drawn from
+    # ``section_defend_wear`` (a worn defender vs a fresh attacker). Held = still
+    # ahead at the end, no pass stuck against us, clean. Evaluations also defend
+    # every such validation section against each of ``section_eval_attackers``.
+    section_defend_frac: float = 0.0
+    section_attackers: list[str] = field(
+        default_factory=lambda: ["rival_tactician", "rival_tactician_fast"]
+    )
+    section_defend_kinds: list[str] = field(
+        default_factory=lambda: ["straight", "braking"]
+    )
+    section_defend_wear: list[float] = field(default_factory=lambda: [0.0, 0.0])
+    section_eval_attackers: list[str] = field(default_factory=list)
+    # Our tyre wear in those evaluation defences (0 = new tyres).
+    section_eval_wear: float = 0.0
+    # With ``init_model``: first teach DEFENDING by imitation, keeping the rest.
+    # Over this many decisions of the training mix, the label is the rule-based
+    # tactician's defending move whenever a car is behind us, and the starting
+    # model's own choice otherwise (so attacking is distilled, not lost).
+    bc_defend_decisions: int = 0
+    # A frozen main-driver model (.zip) driving every ``rival_behind`` car: the
+    # driver defends against its own attacking. "" = none (no ``rival_behind``).
+    attacker_model: str = ""
+
+
+@dataclass(frozen=True)
+class TacticalConfig:
+    run: TacticalRun
+    sim: dict[str, Any] = field(default_factory=dict)
+    env: dict[str, Any] = field(default_factory=dict)  # RaceEnvParams overrides
+    ppo: dict[str, Any] = field(default_factory=dict)  # PPO(...) keyword args
+    policy: dict[str, Any] = field(default_factory=dict)  # policy_kwargs
+    sections: dict[str, Any] = field(default_factory=dict)  # SectionParams overrides
+
+    def section_params(self) -> SectionParams:
+        return SectionParams(**self.sections)
+
+    def env_params(self) -> RaceEnvParams:
+        overrides = dict(self.env)
+        for key in (
+            "start_speed_ms",
+            "lookahead_windows_m",
+            "edge_points_m",
+            "reference_points_m",
+            "opponents",
+            "push_levels",
+            "opponent_gap_m",
+            "real_gap_m",
+            "pass_window_m",
+            "tactical_moves",
+        ):
+            if key in overrides:
+                overrides[key] = tuple(overrides[key])
+        if isinstance(overrides.get("guard"), dict):
+            overrides["guard"] = GuardParams(**overrides["guard"])
+        return RaceEnvParams(**{"tactical": True, "tires": True, **overrides})
+
+    def sim_params(self, seed: int) -> SimParams:
+        return SimParams(seed=seed, **self.sim)
+
+
+def load_tactical_config(path: Path) -> TacticalConfig:
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    unknown = set(raw) - {f.name for f in fields(TacticalConfig)} - {"tactical"}
+    if unknown:
+        raise ValueError(f"unknown config sections: {sorted(unknown)}")
+    config = TacticalConfig(
+        run=TacticalRun(**raw["run"]),
+        sim=raw.get("sim") or {},
+        env=raw.get("env") or {},
+        ppo=raw.get("ppo") or {},
+        policy=raw.get("policy") or {},
+        sections=raw.get("sections") or {},
+    )
+    config.section_params()
+    config.env_params()
+    config.sim_params(0)
+    return config
+
+
+class RivalPool:
+    """Frozen copies of the policy for self-play, newest last."""
+
+    def __init__(self, size: int) -> None:
+        self.size = size
+        self.policies: list[Any] = []
+
+    def add(self, policy: Any) -> None:
+        frozen = copy.deepcopy(policy)
+        frozen.set_training_mode(False)
+        self.policies = [*self.policies, frozen][-self.size :]
+
+    def pick(self, rng: np.random.Generator) -> Callable[[Any], int]:
+        policy = self.policies[int(rng.integers(len(self.policies)))]
+
+        def drive(obs: Any) -> int:
+            return int(policy.predict(obs, deterministic=True)[0])
+
+        return drive
+
+
+class MultiTrackTactical(gym.Env[Any, Any]):
+    """One env that drives a different track each episode (seeded RNG)."""
+
+    def __init__(
+        self,
+        envs: dict[str, TacticalEnv],
+        seed: int,
+        starts: dict[str, list[RealStart]] | None = None,
+        real_frac: float = 0.0,
+        pool: RivalPool | None = None,
+        rival_frac: float = 0.0,
+        sections: dict[str, list[Section]] | None = None,
+        run: "TacticalRun | None" = None,
+    ) -> None:
+        self.envs = envs
+        self.sections = sections or {}
+        self.section_run = run
+        # Per-section win rate (exponential average), for prioritised sampling.
+        self.section_wins: dict[str, float] = {}
+        self._section: Section | None = None
+        self.starts = starts or {}
+        self.real_frac = real_frac
+        self.pool = pool
+        self.rival_frac = rival_frac
+        self._names = list(envs)
+        self._seed = seed
+        self._current = self._names[0]
+        self.action_space = envs[self._current].action_space
+        self.observation_space = envs[self._current].observation_space
+        self._first = True
+
+    def reset(
+        self, *, seed: int | None = None, options: dict[str, Any] | None = None
+    ) -> tuple[Any, dict[str, Any]]:
+        if seed is None and self._first:
+            seed = self._seed
+        super().reset(seed=seed)
+        self._first = False
+        self._current = self._names[int(self.np_random.integers(len(self._names)))]
+        here = self.starts.get(self._current, [])
+        env = self.envs[self._current]
+        env.rival = env.fixed_rival
+        rival = bool(
+            self.pool
+            and self.pool.policies
+            and self.np_random.random() < self.rival_frac
+        )
+        opts: dict[str, Any] | None = None
+        self._section = None
+        run = self.section_run
+        secs = self.sections.get(self._current, [])
+        if run is not None and secs and self.np_random.random() < run.section_frac:
+            self._section = self._pick_section(secs, run)
+            opp = run.section_opponents[
+                int(self.np_random.integers(len(run.section_opponents)))
+            ]
+            lo, hi = run.section_gap_m
+            gap = float(self.np_random.uniform(lo, hi))
+            options = section_options(self._section, opp, gap)
+            defend = [x for x in secs if x.kind in run.section_defend_kinds]
+            if defend and self.np_random.random() < run.section_defend_frac:
+                self._section = self._pick_section(defend, run, "def_")
+                opp = run.section_attackers[
+                    int(self.np_random.integers(len(run.section_attackers)))
+                ]
+                options = defend_options(
+                    self._section,
+                    opp,
+                    gap,
+                    float(
+                        self.np_random.uniform(
+                            run.section_defend_wear[0], run.section_defend_wear[1]
+                        )
+                    ),
+                )
+            obs, info = env.reset(
+                seed=int(self.np_random.integers(2**31 - 1)), options=options
+            )
+            return obs, info
+        if here and self.np_random.random() < self.real_frac:
+            start = here[int(self.np_random.integers(len(here)))]
+            opts = start.options()
+            if rival:  # the rival takes the real opponent's place
+                ahead = start.role == "attack"
+                opts["opponent"] = "rival_ahead" if ahead else "rival_behind"
+        elif rival:
+            side = ("rival_ahead", "rival_behind")[int(self.np_random.integers(2))]
+            opts = {"opponent": side}
+        if rival:
+            assert self.pool is not None
+            env.rival = self.pool.pick(self.np_random)
+        obs, info = env.reset(
+            seed=int(self.np_random.integers(2**31 - 1)), options=opts
+        )
+        return obs, info
+
+    def _pick_section(
+        self, secs: list[Section], run: "TacticalRun", prefix: str = ""
+    ) -> Section:
+        if not run.section_priority:
+            return secs[int(self.np_random.integers(len(secs)))]
+        # Sections sometimes won and sometimes lost are drawn most (most left to
+        # learn there); ones always won or never won yet keep a smaller chance.
+        # Defending a section is tracked apart from attacking it (``prefix``).
+        rate = np.array([self.section_wins.get(prefix + x.name, 0.5) for x in secs])
+        w = rate * (1.0 - rate) + 0.1
+        return secs[int(self.np_random.choice(len(secs), p=w / w.sum()))]
+
+    def step(self, action: Any) -> tuple[Any, float, bool, bool, dict[str, Any]]:
+        out = self.envs[self._current].step(action)
+        if self._section is not None and (out[2] or out[3]):
+            info = out[4]
+            won = float(section_won(info))
+            key = ("def_" if info["defending"] else "") + self._section.name
+            self.section_wins[key] = 0.8 * self.section_wins.get(key, 0.5) + 0.2 * won
+            self._section = None
+        return out
+
+
+def section_won(info: dict[str, Any]) -> bool:
+    """A section battle is won: ahead at the section's end, the pass stuck (a
+    defence: no pass stuck against us), and clean: no contact, never off the track,
+    and never closer to the other car than clean racing allows (``dirty_steps``:
+    `RaceEnvParams.clean_side_m` etc.)."""
+    clean = not info["contact"] and not info["off_track"] and not info["dirty_steps"]
+    need = 0 if info.get("defending") else 1
+    return bool(info["section_won"] and info["passes"] >= need and clean)
+
+
+def defend_options(
+    sec: Section, attacker: str, gap_m: float, wear: float = 0.0
+) -> dict[str, Any]:
+    """`RaceEnv.reset` options for DEFENDING ``sec``: our car at its start on the
+    racing line, ``attacker`` ``gap_m`` behind, our tyres ``wear`` worn."""
+    opts = section_options(sec, attacker, gap_m)
+    opts.update(start_shift_m=0.0, gap_m=gap_m, wear=wear)
+    return opts
+
+
+def section_battle(
+    env: TacticalEnv,
+    policy: Any,
+    sec: Section,
+    opponent: str,
+    gap_m: float,
+    wear: float = 0.0,
+) -> dict[str, Any]:
+    """One deterministic section battle (see `f1rl.sections`); against a car that
+    starts behind (an attacker), a defence."""
+    behind = OPPONENT_KINDS[opponent][1] == "behind"
+    options = (
+        defend_options(sec, opponent, gap_m, wear)
+        if behind
+        else section_options(sec, opponent, gap_m)
+    )
+    obs, info = env.reset(seed=0, options=options)
+    for _ in range(2000):
+        obs, _, term, trunc, info = env.step(pick(env, obs, policy))
+        if term or trunc:
+            break
+    return {
+        "won": section_won(info),
+        "ahead_at_end": bool(info["section_won"]),
+        "passes": int(info["passes"]),
+        "contact": bool(info["contact"]),
+        "off": bool(info["off_track"]),
+        "interventions": int(info["interventions"]),
+        "rescues": int(info["rescues"]),
+        "my_rescues": int(info["my_rescues"]),
+        "dirty_steps": int(info["dirty_steps"]),
+        **{k: int(info[k]) for k in ("dirty_side", "dirty_chop", "dirty_follow")},
+        "elapsed_s": float(info["elapsed_s"]),
+    }
+
+
+def spread(items: list[RealStart], n: int) -> list[RealStart]:
+    """At most ``n`` of ``items``, evenly spaced (deterministic)."""
+    if len(items) <= n:
+        return items
+    return [items[i * len(items) // n] for i in range(n)]
+
+
+def clone_tactician(
+    model: PPO,
+    envs: dict[str, TacticalEnv],
+    decisions: int,
+    epochs: int,
+    seed: int,
+    multi: MultiTrackTactical | None = None,
+) -> float:
+    """Train ``model``'s policy to pick the moves the rule-based tactician picks.
+    Returns the final share of decisions it now agrees with."""
+    rng = np.random.default_rng(seed)
+    names = list(envs)
+    obs_list: list[Any] = []
+    act_list: list[int] = []
+    while len(obs_list) < decisions:
+        if multi is not None:  # the training mix (sections, real starts)
+            obs, _ = multi.reset(seed=int(rng.integers(2**31 - 1)))
+            env = multi.envs[multi._current]
+        else:
+            env = envs[names[int(rng.integers(len(names)))]]
+            obs, _ = env.reset(seed=int(rng.integers(2**31 - 1)))
+        done = False
+        while not done and len(obs_list) < decisions:
+            move = env.moves.index(choose(env))
+            obs_list.append(obs)
+            act_list.append(move)
+            if multi is not None:
+                obs, _, terminated, truncated, _ = multi.step(move)
+            else:
+                obs, _, terminated, truncated, _ = env.step(move)
+            done = terminated or truncated
+    x = torch.as_tensor(np.array(obs_list), dtype=torch.float32)
+    y = torch.as_tensor(act_list, dtype=torch.long)
+    opt = torch.optim.Adam(model.policy.parameters(), lr=1e-3)
+    for _ in range(epochs):
+        order = torch.randperm(len(x))
+        for i in range(0, len(x), 512):
+            idx = order[i : i + 512]
+            _, log_prob, _ = model.policy.evaluate_actions(x[idx], y[idx])
+            loss = -log_prob.mean()
+            opt.zero_grad()
+            loss.backward()  # type: ignore[no-untyped-call]
+            opt.step()
+    with torch.no_grad():
+        pred = model.policy.get_distribution(x).get_actions(deterministic=True)
+    return float((pred == y).float().mean())
+
+
+DEFEND_MOVES = ("line", "cover", "inside")
+
+
+def defence_label(env: TacticalEnv, own: int) -> int:
+    """The label for one decision when cloning a defence: the rule-based
+    tactician's defending move with a car behind us, else ``own`` (the starting
+    model's choice)."""
+    opp = env._opp
+    if opp is None or wrap_gap(opp.state.s_m - env._state.s_m, env._lap_m) >= 0:
+        return own
+    move = choose(env)
+    return env.moves.index(move if move in DEFEND_MOVES else "line")
+
+
+def clone_defence(
+    model: PPO, multi: MultiTrackTactical, decisions: int, epochs: int, seed: int
+) -> float:
+    """Teach ``model`` the tactician's defending moves while keeping its own
+    choices elsewhere (`TacticalRun.bc_defend_decisions`). The episodes are played
+    by the labels. Returns the share of decisions the model then agrees with."""
+    teacher = copy.deepcopy(model.policy)
+    teacher.set_training_mode(False)
+    rng = np.random.default_rng(seed)
+    obs_list: list[Any] = []
+    act_list: list[int] = []
+    while len(obs_list) < decisions:
+        obs, _ = multi.reset(seed=int(rng.integers(2**31 - 1)))
+        env = multi.envs[multi._current]
+        done = False
+        while not done and len(obs_list) < decisions:
+            own = int(teacher.predict(obs, deterministic=True)[0])
+            move = defence_label(env, own)
+            obs_list.append(obs)
+            act_list.append(move)
+            obs, _, terminated, truncated, _ = multi.step(move)
+            done = terminated or truncated
+    x = torch.as_tensor(np.array(obs_list), dtype=torch.float32)
+    y = torch.as_tensor(act_list, dtype=torch.long)
+    opt = torch.optim.Adam(model.policy.parameters(), lr=3e-4)
+    for _ in range(epochs):
+        order = torch.randperm(len(x))
+        for i in range(0, len(x), 512):
+            idx = order[i : i + 512]
+            _, log_prob, _ = model.policy.evaluate_actions(x[idx], y[idx])
+            loss = -log_prob.mean()
+            opt.zero_grad()
+            loss.backward()  # type: ignore[no-untyped-call]
+            opt.step()
+    with torch.no_grad():
+        pred = model.policy.get_distribution(x).get_actions(deterministic=True)
+    return float((pred == y).float().mean())
+
+
+class PoolCallback(BaseCallback):
+    """Adds a frozen copy of the policy to the self-play pool every so often."""
+
+    def __init__(self, pool: RivalPool, every_steps: int) -> None:
+        super().__init__()
+        self.pool = pool
+        self.every = every_steps
+        self._next = every_steps
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps >= self._next:
+            self._next += self.every
+            self.pool.add(self.model.policy)
+        return True
+
+
+class ScenarioCallback(BaseCallback):
+    """Runs the scenario suite on the validation tracks; keeps the best model."""
+
+    def __init__(
+        self,
+        run_dir: Path,
+        envs: dict[str, TacticalEnv],
+        eval_every_steps: int,
+        real_envs: dict[str, TacticalEnv] | None = None,
+        starts: dict[str, list[RealStart]] | None = None,
+        sections: dict[str, list[Section]] | None = None,
+        section_opponents: list[str] | None = None,
+        section_gap_m: float = 12.0,
+        section_attackers: list[str] | None = None,
+        defend_kinds: list[str] | None = None,
+        defend_wear: float = 0.0,
+    ) -> None:
+        super().__init__()
+        self.defend_wear = defend_wear
+        self.sections = sections or {}
+        self.section_attackers = section_attackers or []
+        self.defend_kinds = defend_kinds or []
+        self.section_opponents = section_opponents or []
+        self.section_gap_m = section_gap_m
+        self.run_dir = run_dir
+        self.envs = envs
+        self.real_envs = real_envs or {}
+        self.starts = starts or {}
+        self.eval_every = eval_every_steps
+        self.best: tuple[bool, float] = (False, -1.0)  # (no contact, score)
+        self._next = 0
+
+    def _on_training_start(self) -> None:
+        with (self.run_dir / "eval.csv").open("w", newline="") as f:
+            csv.writer(f).writerow(
+                ["timesteps", "scenario", "wins", "runs", "contacts"]
+            )
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps >= self._next:
+            self._next += self.eval_every
+            self._evaluate()
+        return True
+
+    def _evaluate(self) -> None:
+        rows = []
+        for scenario, (options, kind) in SCENARIOS.items():
+            res = [
+                run_one(env, options, kind, self.model) for env in self.envs.values()
+            ]
+            rows.append(
+                (
+                    scenario,
+                    sum(r["success"] for r in res),
+                    len(res),
+                    sum(r["contact"] for r in res),
+                )
+            )
+        real = [
+            run_real(self.real_envs[name], st, self.model)
+            for name, sts in self.starts.items()
+            if name in self.real_envs
+            for st in sts
+        ]
+        for role in ROLES:
+            res = [r for r in real if r["role"] == role]
+            if res:
+                rows.append(
+                    (
+                        f"real_{role}",
+                        sum(r["success"] for r in res),
+                        len(res),
+                        sum(r["contact"] for r in res),
+                    )
+                )
+        sec_rows = [
+            (sec.kind, section_battle(self.real_envs[name], self.model, sec, o, g))
+            for name, secs in self.sections.items()
+            for sec in secs
+            for o in self.section_opponents
+            for g in (self.section_gap_m,)
+        ]
+        sec_rows += [
+            (
+                f"def_{sec.kind}",
+                section_battle(
+                    self.real_envs[name], self.model, sec, o, g, self.defend_wear
+                ),
+            )
+            for name, secs in self.sections.items()
+            for sec in secs
+            if sec.kind in self.defend_kinds
+            for o in self.section_attackers
+            for g in (self.section_gap_m,)
+        ]
+        for kind in (*KINDS, *(f"def_{k}" for k in KINDS)):
+            res = [r for k, r in sec_rows if k == kind]
+            if res:
+                rows.append(
+                    (
+                        kind if kind.startswith("def_") else f"sec_{kind}",
+                        sum(r["won"] for r in res),
+                        len(res),
+                        sum(r["contact"] for r in res),
+                    )
+                )
+        with (self.run_dir / "eval.csv").open("a", newline="") as f:
+            w = csv.writer(f)
+            for row in rows:
+                w.writerow([self.num_timesteps, *row])
+        score = sum(r[1] for r in rows) / sum(r[2] for r in rows)
+        contacts = sum(r[3] for r in rows)
+        # A model with any contact never beats one without: no crashes comes first.
+        key = (contacts == 0, score)
+        improved = key > self.best
+        if improved:
+            self.best = key
+            self.model.save(self.run_dir / "model_best.zip")
+        self.logger.record("eval/scenario_rate", score)
+        self.logger.record("eval/contacts", contacts)
+        text = " ".join(f"{s}:{w}/{n}" for s, w, n, _ in rows)
+        print(
+            f"[eval] {self.num_timesteps:>9,}  {score:5.1%}  contacts {contacts}  "
+            + text
+            + ("  *best" if improved else ""),
+            flush=True,
+        )
+
+    def _on_training_end(self) -> None:
+        self._evaluate()
+
+
+def use_defender(envs: Iterable[TacticalEnv], path: str, moves: Sequence[str]) -> None:
+    """Make a trained defender drive every ``rival_ahead*`` car of ``envs``."""
+    from f1rl.agents.defender_rl import load_defender  # imports this module
+
+    drive = load_defender(Path(path), tuple(moves))
+    for env in envs:
+        env.fixed_rival = drive
+        env.rival = drive
+        env.rival_plain_obs = True
+
+
+def use_attacker(envs: Iterable[TacticalEnv], path: str) -> None:
+    """Make a frozen main-driver model drive every ``rival_behind`` car of ``envs``
+    (`TacticalEnv.fixed_attacker`), from the full observation layout."""
+    policy = PPO.load(path, device="cpu").policy
+    policy.set_training_mode(False)
+
+    def drive(obs: Any) -> int:
+        return int(policy.predict(obs, deterministic=True)[0])
+
+    for env in envs:
+        n_saved = policy.observation_space.shape[0]  # type: ignore[index]
+        n_env = env.observation_space.shape[0]  # type: ignore[index]
+        if n_saved != n_env:
+            raise ValueError(f"attacker model sees {n_saved} inputs, env has {n_env}")
+        env.fixed_attacker = drive
+
+
+def load_grown(model: PPO, path: str) -> list[str]:
+    """Load a saved policy into ``model``, whose observation may have grown: new
+    inputs (appended at the end, e.g. `RaceEnvParams.plan_features`) get zero
+    weights in the first layers, so the model starts out acting exactly as the saved
+    one did. Returns the names of the layers that grew."""
+    saved = PPO.load(path, device="cpu").policy.state_dict()
+    mine = model.policy.state_dict()
+    grown = []
+    for key, old in saved.items():
+        new = mine[key]
+        if old.shape != new.shape:
+            if (
+                old.dim() != 2
+                or old.shape[0] != new.shape[0]
+                or old.shape[1] > new.shape[1]
+            ):
+                raise ValueError(f"{key}: {tuple(old.shape)} -> {tuple(new.shape)}")
+            pad = new.new_zeros(new.shape)
+            pad[:, : old.shape[1]] = old
+            old = pad
+            grown.append(key)
+        mine[key] = old
+    model.policy.load_state_dict(mine)
+    return grown
+
+
+def train(config: TacticalConfig, run_dir: Path, car: CarParams = EXAMPLE_CAR) -> PPO:
+    run = config.run
+    torch.set_num_threads(run.torch_threads)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "tactical": True,
+                "run": asdict(run),
+                "sim": config.sim,
+                "env": config.env,
+                "ppo": config.ppo,
+                "policy": config.policy,
+                "sections": config.sections,
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    params = config.env_params()
+    train_names = resolve_track_names(run.train_tracks)
+    val_names = resolve_track_names(run.validation_tracks)
+    test_names = resolve_track_names(run.held_out_tracks)
+    if set(train_names) & (set(val_names) | set(test_names)) or set(val_names) & set(
+        test_names
+    ):
+        raise ValueError("train/validation/held-out tracks overlap")
+    kits = prepare_tracks(train_names + val_names + test_names, car, params)
+    (run_dir / "meta.json").write_text(
+        json.dumps(
+            {
+                "git_sha": git_sha(),
+                "python": platform.python_version(),
+                "stable_baselines3": stable_baselines3.__version__,
+                "torch": torch.__version__,
+                "car": asdict(car),
+                "env_params": asdict(params),
+                "splits": {
+                    "train": train_names,
+                    "validation": val_names,
+                    "held_out": test_names,
+                },
+                "moves": list(MOVES + (PULL_MOVES if params.pull_moves else ())),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    def make_envs(names: list[str], mode: str, seed: int) -> dict[str, TacticalEnv]:
+        envs = {
+            n: TacticalEnv(
+                car, kits[n].track, config.sim_params(seed), params, kits[n].line, mode
+            )
+            for n in names
+        }
+        if run.defender_model:
+            use_defender(envs.values(), run.defender_model, run.defender_moves)
+        if run.attacker_model:
+            use_attacker(envs.values(), run.attacker_model)
+        return envs
+
+    starts: dict[str, list[RealStart]] = {}
+    val_starts: dict[str, list[RealStart]] = {}
+    if run.real_start_frac > 0:
+        library = [
+            st
+            for st in load_real_starts(Path(run.incident_dir))
+            if st.role in run.real_roles
+        ]
+        starts = {
+            k: v for k, v in by_track(library, ["train"]).items() if k in train_names
+        }
+        val_starts = {
+            k: spread(v, run.real_eval_per_track)
+            for k, v in by_track(library, ["validation"]).items()
+            if k in val_names
+        }
+        print(
+            f"Real starts: {sum(map(len, starts.values()))} for training on "
+            f"{len(starts)} tracks, {sum(map(len, val_starts.values()))} for "
+            "validation",
+            flush=True,
+        )
+
+    pool = RivalPool(run.pool_size)
+    train_secs: dict[str, list[Section]] = {}
+    val_secs: dict[str, list[Section]] = {}
+    if run.section_frac > 0 or run.section_eval_opponents or run.section_eval_attackers:
+        sp = config.section_params()
+        probe = make_envs(train_names + val_names, "random", run.seed)
+        train_secs = {n: env_sections(probe[n], sp) for n in train_names}
+        if run.section_eval_opponents or run.section_eval_attackers:
+            val_secs = {n: env_sections(probe[n], sp) for n in val_names}
+        print(
+            f"Sections: {sum(map(len, train_secs.values()))} on the training tracks, "
+            f"{sum(map(len, val_secs.values()))} on the validation tracks",
+            flush=True,
+        )
+
+    def make_multi(i: int) -> Callable[[], MultiTrackTactical]:
+        def _make() -> MultiTrackTactical:
+            return MultiTrackTactical(
+                make_envs(train_names, "random", run.seed + i),
+                run.seed + i,
+                starts,
+                run.real_start_frac,
+                pool,
+                run.rival_frac,
+                train_secs if run.section_frac > 0 else None,
+                run,
+            )
+
+        return _make
+
+    if run.subproc and run.rival_frac > 0:
+        raise ValueError("subproc envs cannot share the self-play pool: rival_frac 0")
+    fns: list[Callable[[], gym.Env[Any, Any]]] = [
+        make_multi(i) for i in range(run.n_envs)
+    ]
+    vec_env: Any = SubprocVecEnv(fns) if run.subproc else DummyVecEnv(fns)
+    if run.normalize_reward:
+        vec_env = VecNormalize(
+            vec_env,
+            norm_obs=False,
+            norm_reward=True,
+            gamma=float(config.ppo.get("gamma", 0.99)),
+        )
+    policy_kwargs = dict(config.policy)
+    if "activation_fn" in policy_kwargs:
+        policy_kwargs["activation_fn"] = getattr(
+            torch.nn, policy_kwargs["activation_fn"]
+        )
+    model = PPO(
+        "MlpPolicy",
+        vec_env,
+        seed=run.seed,
+        device="cpu",
+        policy_kwargs=policy_kwargs,
+        verbose=0,
+        **config.ppo,
+    )
+    model.set_logger(configure(str(run_dir), ["csv"]))
+    if run.init_model:
+        grown = load_grown(model, run.init_model)
+        print(f"Starting from {run.init_model}", flush=True)
+        if grown:
+            print(f"  new inputs start at zero weight: {', '.join(grown)}", flush=True)
+        if run.bc_defend_decisions:
+            agree = clone_defence(
+                model,
+                make_multi(20_000)(),
+                run.bc_defend_decisions,
+                run.bc_epochs,
+                run.seed,
+            )
+            print(f"Defence cloning: agrees with its labels on {agree:.1%}", flush=True)
+    elif run.bc_decisions:
+        agree = clone_tactician(
+            model,
+            make_envs(train_names, "random", run.seed + 20_000),
+            run.bc_decisions,
+            run.bc_epochs,
+            run.seed,
+            make_multi(20_000)() if run.section_frac > 0 else None,
+        )
+        print(
+            f"Behaviour cloning: agrees with the tactician on {agree:.1%}", flush=True
+        )
+    callback = ScenarioCallback(
+        run_dir,
+        make_envs(val_names, "lap", run.seed + 30_000),
+        run.eval_every_steps,
+        make_envs(sorted(set(val_starts) | set(val_secs)), "random", run.seed + 40_000),
+        val_starts,
+        val_secs,
+        run.section_eval_opponents,
+        run.section_eval_gap_m,
+        run.section_eval_attackers,
+        run.section_defend_kinds,
+        run.section_eval_wear,
+    )
+    callbacks: list[BaseCallback] = [callback]
+    if run.rival_frac > 0:
+        pool.add(model.policy)  # the first rival: the starting policy itself
+        callbacks.append(PoolCallback(pool, run.pool_every_steps))
+    model.learn(total_timesteps=run.total_timesteps, callback=CallbackList(callbacks))
+    model.save(run_dir / "model_final.zip")
+    return model

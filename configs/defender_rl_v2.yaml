@@ -1,0 +1,80 @@
+# v2 of defender_rl.yaml (2026-10-29). v1 started from a random policy and stayed
+# near-random (entropy ~0.9 of a max 1.1 nats): held 11/36 at 50k and 10/36 (1
+# contact) at 100k, below never defending (21/36). v2 starts as "never defend"
+# (behaviour cloning of line, 3 short epochs so it is not a hard lock), with a
+# lower entropy bonus, so PPO has to find WHEN a cover or inside pays.
+# Below: v1's notes.
+# A learned DEFENDER (f1rl.agents.defender_rl), 2026-10-29: the car in front picks
+# only defending moves (line / cover / inside) under the defending rules, against
+# the rule-based race-craft attacker (equal pace and a touch quicker) and the simple
+# scripted attackers. Same world as tactical_v4.yaml. PPO from scratch: no
+# behaviour cloning, because the rule-based defender holds FEWER validation battles
+# (13/36) than never defending at all (21/36) -- defending every corner costs too
+# much time, and when to defend is what this run should learn. Picked on validation
+# defend battles (6 starts per track, 20 m apart); no contact comes first.
+# Reward: RaceEnv's (unchanged): progress, GT Sophy metres gained/lost while close,
+# -100 once a pass against us sticks (600 m), filter and crash penalties.
+tactical: true
+
+run:
+  name: defender_rl_v2
+  seed: 0
+  total_timesteps: 300000
+  n_envs: 4
+  eval_every_steps: 50000
+  eval_starts: 6
+  torch_threads: 1
+  bc_decisions: 20000
+  bc_epochs: 3
+  bc_teacher: line
+  normalize_reward: true
+  subproc: true
+
+sim:
+  dt_s: 0.02
+  max_episode_steps: 10000
+
+env:
+  action_repeat: 5
+  reference_features: true
+  tactical: true
+  tires: true
+  safety_filter: true
+  wear_cost_per_unit: 3000.0
+  opponents: [rival_tactician, rival_tactician, rival_tactician_fast, attacker_equal, attacker]
+  opponent_gap_m: [10.0, 35.0]
+  overtake_bonus: 100.0
+  pass_hold_m: 600.0
+  pass_reward_per_m: 1.0
+  intervention_penalty: 0.5
+  lookahead_windows_m: [10, 20, 30, 40, 50, 60, 80, 100, 125, 150, 200, 250]
+  progress_scale_m: 50.0
+  fail_penalty: 50.0
+  episode_s: 90.0
+  min_speed_ms: 3.0
+  follow_shield: true
+  shield_in_tow: false
+  soft_follow: true
+  opponent_yield: false
+  wake_anticipation_m: 25.0
+  tow_accel_gain: 0.3
+  path_edge_inset_m: 0.6
+  track_limit_margin_m: 0.5
+  commit_moves: true
+  opponent_features: true
+  tactical_moves: [line, cover, inside]
+  defend_rules: true
+
+ppo:
+  learning_rate: 0.0003
+  n_steps: 256
+  batch_size: 256
+  n_epochs: 8
+  gamma: 0.97
+  gae_lambda: 0.95
+  ent_coef: 0.005
+  clip_range: 0.2
+
+policy:
+  net_arch: [256, 256]
+  activation_fn: ReLU

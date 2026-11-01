@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 860" width="1240" height="860" font-family="system-ui, Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#52514e"/>
+    </marker>
+    <marker id="g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1baf7a"/>
+    </marker>
+    <marker id="o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#eb6834"/>
+    </marker>
+  </defs>
+  <rect width="1240" height="860" fill="#fcfcfb"/>
+
+  <text x="620" y="36" text-anchor="middle" font-size="24" font-weight="700" fill="#0b0b0b">How SAC (Soft Actor-Critic) trains the driver</text>
+  <text x="620" y="60" text-anchor="middle" font-size="14" fill="#52514e">Both models use this. Pure RL: 28 inputs. Hybrid RL: 39 inputs (adds the optimal line). Output: 2 numbers.</text>
+
+  <!-- ===== LEFT: driving loop ===== -->
+  <text x="40" y="100" font-size="16" font-weight="700" fill="#0b0b0b">A. Driving (collecting experience, 10 decisions per second)</text>
+
+  <!-- Simulator -->
+  <rect x="40" y="120" width="250" height="150" rx="10" fill="#eef3fb" stroke="#2a78d6" stroke-width="2"/>
+  <text x="165" y="148" text-anchor="middle" font-size="16" font-weight="700" fill="#0b0b0b">Simulator (RaceEnv)</text>
+  <text x="165" y="170" text-anchor="middle" font-size="13" fill="#52514e">8 copies run in parallel</text>
+  <text x="165" y="190" text-anchor="middle" font-size="13" fill="#52514e">random track, start, speed</text>
+  <text x="165" y="210" text-anchor="middle" font-size="13" fill="#52514e">car shares one grip limit</text>
+  <text x="165" y="230" text-anchor="middle" font-size="13" fill="#52514e">ends: off track / too slow</text>
+  <text x="165" y="250" text-anchor="middle" font-size="13" fill="#52514e">reward = distance advanced</text>
+
+  <!-- Observation -->
+  <rect x="350" y="120" width="230" height="150" rx="10" fill="#fff" stroke="#8a8984" stroke-width="2"/>
+  <text x="465" y="146" text-anchor="middle" font-size="15" font-weight="700" fill="#0b0b0b">Observation s</text>
+  <text x="465" y="168" text-anchor="middle" font-size="12" fill="#52514e">speed, room to each edge</text>
+  <text x="465" y="186" text-anchor="middle" font-size="12" fill="#52514e">heading error, last commands</text>
+  <text x="465" y="204" text-anchor="middle" font-size="12" fill="#52514e">12 corner lookahead windows</text>
+  <text x="465" y="222" text-anchor="middle" font-size="12" fill="#52514e">track edges 25-150 m ahead</text>
+  <text x="465" y="244" text-anchor="middle" font-size="13" font-weight="700" fill="#0b0b0b">28 numbers (hybrid: 39)</text>
+
+  <!-- Actor -->
+  <rect x="640" y="120" width="260" height="150" rx="10" fill="#eaf7f1" stroke="#1baf7a" stroke-width="2"/>
+  <text x="770" y="146" text-anchor="middle" font-size="16" font-weight="700" fill="#0b0b0b">ACTOR network</text>
+  <text x="770" y="166" text-anchor="middle" font-size="12" fill="#52514e">the driver's brain (policy)</text>
+  <g font-size="12" fill="#0b0b0b" text-anchor="middle">
+    <rect x="655" y="180" width="52" height="34" rx="6" fill="#fff" stroke="#1baf7a"/><text x="681" y="201">28</text>
+    <rect x="719" y="180" width="52" height="34" rx="6" fill="#fff" stroke="#1baf7a"/><text x="745" y="201">256</text>
+    <rect x="783" y="180" width="52" height="34" rx="6" fill="#fff" stroke="#1baf7a"/><text x="809" y="201">256</text>
+    <rect x="847" y="180" width="40" height="34" rx="6" fill="#fff" stroke="#1baf7a"/><text x="867" y="201">2+2</text>
+  </g>
+  <path d="M707,197 H719 M771,197 H783 M835,197 H847" stroke="#1baf7a" stroke-width="1.5" marker-end="url(#g)"/>
+  <text x="770" y="236" text-anchor="middle" font-size="12" fill="#52514e">outputs a mean and a spread</text>
+  <text x="770" y="254" text-anchor="middle" font-size="12" fill="#52514e">for each action, then samples one</text>
+
+  <!-- Action -->
+  <rect x="960" y="120" width="240" height="150" rx="10" fill="#fff" stroke="#8a8984" stroke-width="2"/>
+  <text x="1080" y="146" text-anchor="middle" font-size="15" font-weight="700" fill="#0b0b0b">Action a (2 numbers)</text>
+  <text x="1080" y="170" text-anchor="middle" font-size="12" fill="#52514e">throttle(+) / brake(-)  in [-1, 1]</text>
+  <text x="1080" y="190" text-anchor="middle" font-size="12" fill="#52514e">steering (left +)  in [-1, 1]</text>
+  <text x="1080" y="216" text-anchor="middle" font-size="12" fill="#52514e">scaled onto the grip limit,</text>
+  <text x="1080" y="234" text-anchor="middle" font-size="12" fill="#52514e">held for 0.1 s</text>
+  <text x="1080" y="256" text-anchor="middle" font-size="12" fill="#52514e">(random noise while training)</text>
+
+  <path d="M290,195 H350" stroke="#52514e" stroke-width="2" marker-end="url(#a)"/>
+  <path d="M580,195 H640" stroke="#52514e" stroke-width="2" marker-end="url(#a)"/>
+  <path d="M900,195 H960" stroke="#52514e" stroke-width="2" marker-end="url(#a)"/>
+  <!-- action back to simulator -->
+  <path d="M1080,270 V310 H165 V270" fill="none" stroke="#52514e" stroke-width="2" marker-end="url(#a)"/>
+  <text x="620" y="304" text-anchor="middle" font-size="12" fill="#52514e">the action drives the car for the next 0.1 s</text>
+
+  <!-- Replay buffer -->
+  <rect x="40" y="370" width="1160" height="86" rx="10" fill="#fdf4e3" stroke="#eda100" stroke-width="2"/>
+  <text x="620" y="398" text-anchor="middle" font-size="16" font-weight="700" fill="#0b0b0b">REPLAY BUFFER  (keeps the last 1,000,000 experiences)</text>
+  <text x="620" y="424" text-anchor="middle" font-size="13" fill="#52514e">each entry:  (state s,  action a,  reward r,  next state s',  done?)</text>
+  <text x="620" y="444" text-anchor="middle" font-size="12" fill="#52514e">old experience is reused many times: this is why SAC is sample-efficient. Learning starts after 10,000 entries.</text>
+
+  <path d="M165,310 V370" stroke="#eb6834" stroke-width="2" marker-end="url(#o)" stroke-dasharray="6 4"/>
+  <text x="178" y="345" font-size="12" fill="#eb6834">stores (s, a, r, s')</text>
+
+  <!-- ===== BOTTOM: learning ===== -->
+  <text x="40" y="500" font-size="16" font-weight="700" fill="#0b0b0b">B. Learning (4 updates for every 8 new experiences; each uses a random batch of 256)</text>
+
+  <path d="M620,456 V520" stroke="#eb6834" stroke-width="2.5" marker-end="url(#o)"/>
+  <text x="634" y="494" font-size="12" fill="#eb6834">random batch of 256</text>
+
+  <!-- Critics -->
+  <rect x="40" y="530" width="360" height="200" rx="10" fill="#fbeeea" stroke="#eb6834" stroke-width="2"/>
+  <text x="220" y="558" text-anchor="middle" font-size="16" font-weight="700" fill="#0b0b0b">TWO CRITIC networks (Q1, Q2)</text>
+  <text x="220" y="578" text-anchor="middle" font-size="12" fill="#52514e">"how good is this action in this situation?"</text>
+  <g font-size="12" fill="#0b0b0b" text-anchor="middle">
+    <rect x="58" y="596" width="70" height="40" rx="6" fill="#fff" stroke="#eb6834"/><text x="93" y="613">state +</text><text x="93" y="628">action: 30</text>
+    <rect x="148" y="596" width="56" height="40" rx="6" fill="#fff" stroke="#eb6834"/><text x="176" y="621">256</text>
+    <rect x="224" y="596" width="56" height="40" rx="6" fill="#fff" stroke="#eb6834"/><text x="252" y="621">256</text>
+    <rect x="300" y="596" width="84" height="40" rx="6" fill="#fff" stroke="#eb6834"/><text x="342" y="613">1 number:</text><text x="342" y="628">expected return</text>
+  </g>
+  <path d="M128,616 H148 M204,616 H224 M280,616 H300" stroke="#eb6834" stroke-width="1.5" marker-end="url(#o)"/>
+  <text x="220" y="664" text-anchor="middle" font-size="12" fill="#52514e">Two copies; SAC trusts the LOWER of the two.</text>
+  <text x="220" y="682" text-anchor="middle" font-size="12" fill="#52514e">This stops them being over-optimistic,</text>
+  <text x="220" y="700" text-anchor="middle" font-size="12" fill="#52514e">the usual way RL agents fool themselves.</text>
+  <text x="220" y="720" text-anchor="middle" font-size="12" font-weight="700" fill="#0b0b0b">Trained to match the target y (right)</text>
+
+  <!-- Target critics -->
+  <rect x="440" y="530" width="360" height="200" rx="10" fill="#f1f1ee" stroke="#8a8984" stroke-width="2"/>
+  <text x="620" y="558" text-anchor="middle" font-size="16" font-weight="700" fill="#0b0b0b">TWO TARGET critics (slow copies)</text>
+  <text x="620" y="580" text-anchor="middle" font-size="12" fill="#52514e">same shape as the critics, but they only drift toward them:</text>
+  <text x="620" y="602" text-anchor="middle" font-size="13" font-weight="700" fill="#0b0b0b">new = 0.005 x critic + 0.995 x old</text>
+  <text x="620" y="632" text-anchor="middle" font-size="12" fill="#52514e">Learning from a fixed-ish target keeps training stable.</text>
+  <text x="620" y="660" text-anchor="middle" font-size="13" font-weight="700" fill="#0b0b0b">Target y  =  r  +  0.995 x [ min(Q1', Q2')(s', a')</text>
+  <text x="620" y="680" text-anchor="middle" font-size="13" font-weight="700" fill="#0b0b0b">- alpha x log pi(a' | s') ]</text>
+  <text x="620" y="706" text-anchor="middle" font-size="12" fill="#52514e">r = reward now; 0.995 = how much the future counts;</text>
+  <text x="620" y="722" text-anchor="middle" font-size="12" fill="#52514e">a' comes from the actor at the next state s'</text>
+
+  <!-- Actor update + alpha -->
+  <rect x="840" y="530" width="360" height="200" rx="10" fill="#eaf7f1" stroke="#1baf7a" stroke-width="2"/>
+  <text x="1020" y="558" text-anchor="middle" font-size="16" font-weight="700" fill="#0b0b0b">Improving the ACTOR</text>
+  <text x="1020" y="582" text-anchor="middle" font-size="12" fill="#52514e">Ask the actor for an action in each batch state,</text>
+  <text x="1020" y="600" text-anchor="middle" font-size="12" fill="#52514e">score it with the critics, and nudge the actor to:</text>
+  <text x="1020" y="628" text-anchor="middle" font-size="13" font-weight="700" fill="#0b0b0b">maximise  min(Q1, Q2)(s, a)  +  alpha x randomness</text>
+  <text x="1020" y="660" text-anchor="middle" font-size="12" fill="#52514e">alpha (the "entropy" weight) tunes itself automatically:</text>
+  <text x="1020" y="678" text-anchor="middle" font-size="12" fill="#52514e">high = explore more, low = commit to the best actions.</text>
+  <text x="1020" y="706" text-anchor="middle" font-size="12" fill="#52514e">Final driving uses the actor's mean (no random noise).</text>
+
+  <!-- arrows between learning boxes -->
+  <path d="M440,630 H400" stroke="#8a8984" stroke-width="2" marker-end="url(#a)"/>
+  <text x="420" y="620" text-anchor="middle" font-size="11" fill="#52514e">y</text>
+  <path d="M400,750 H1020 V730" fill="none" stroke="#eb6834" stroke-width="2" marker-end="url(#o)" stroke-dasharray="6 4"/>
+  <text x="710" y="768" text-anchor="middle" font-size="12" fill="#eb6834">the critics' scores tell the actor which actions to make more likely</text>
+  <path d="M220,730 V750" stroke="#eb6834" stroke-width="2" stroke-dasharray="6 4"/>
+
+  <!-- Footer -->
+  <rect x="40" y="790" width="1160" height="46" rx="8" fill="#f4f4f1" stroke="#e3e2dc"/>
+  <text x="620" y="810" text-anchor="middle" font-size="13" fill="#0b0b0b">Loop: drive, store, learn, repeat for 2,000,000 decisions (pure) / 1,000,000 (hybrid). Only the ACTOR is kept to drive; the critics are scaffolding for training.</text>
+  <text x="620" y="828" text-anchor="middle" font-size="12" fill="#52514e">Network sizes: 28 -> 256 -> 256 -> 2 (actor), 30 -> 256 -> 256 -> 1 (each critic). For the hybrid driver the inputs are 39 and 41.</text>
+</svg>

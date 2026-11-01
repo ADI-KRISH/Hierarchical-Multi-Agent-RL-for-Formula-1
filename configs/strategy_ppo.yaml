@@ -1,0 +1,41 @@
+# STRATEGY agent: PPO picks, once a lap, whether to pit (and for which compound)
+# and a push level for the driver, over a whole Grand Prix against rivals running
+# rule-based strategies. The driver is a STAND-IN (lap-time table on each track's
+# optimal line), not the trained Driver Agent: compounds, pit loss, car spread and
+# overtaking odds are uncalibrated design choices (config.StrategyParams).
+# Checkpoint chosen by mean finishing place on the validation tracks.
+strategy: true
+
+run:
+  name: strategy_ppo
+  seed: 0
+  total_timesteps: 500000     # laps, summed over all envs (~60 laps a race)
+  n_envs: 8
+  eval_every_steps: 25000
+  eval_races: 12
+  train_tracks: train
+  eval_tracks: validation
+
+env:
+  n_cars: 10
+  pit_loss_s: 22.0
+  reward:
+    time_weight: 0.1
+    position_weight: 1.0
+    finish_weight: 0.5
+    rule_penalty: 50.0
+
+baseline:
+  stints: [medium, hard]
+  stop_fractions: [0.45]
+  push_index: 2
+  max_wear: 0.8
+
+ppo:
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 256
+  n_epochs: 10
+  gamma: 0.995
+  gae_lambda: 0.95
+  ent_coef: 0.01

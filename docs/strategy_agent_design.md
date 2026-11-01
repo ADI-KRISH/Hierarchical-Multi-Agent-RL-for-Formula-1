@@ -1,10 +1,11 @@
 # FormulaOneRL: Driver Agent and Strategy Agent Architecture
 
-> **Status: design doc, not started.** This is the detailed design for Phase 8's
-> two-agent hierarchy — see `docs/roadmap.md`. Earliest realistic entry point is
-> after Phase 5 (Driver Agent beats the baseline) or Phase 6 (dashboard), and only
-> once the user explicitly greenlights it. Nothing here is implemented; treat this
-> as the spec to build from *when* that happens, not a description of current code.
+> **Status (2026-10-29): race simulation, rule-based baseline and PPO trainer built;
+> the Strategy Agent is not trained for real yet.** It races with a *stand-in*
+> driver (a lap-time table), because the Driver Agent cannot defend yet and only
+> partly overtakes. See "What is built" at the end of this file. Sections 1-17 are
+> the full design; the code covers pits, compounds, tyre wear, push level, fuel and
+> rivals, not yet ERS, safety cars or weather.
 > The condensed version of this same vision lives in `docs/context.md`; this file
 > is the detailed version it points to.
 
@@ -766,3 +767,288 @@ rewrite):
 * The Driver Agent's observation needs the strategy mode vector `g_t` appended
   — a small, mechanical change to `DriverEnv`'s observation space once the rest
   exists.
+
+
+---
+
+## What is built (2026-10-29)
+
+The strategist decides once a lap, so it trains on a lap-by-lap race model rather
+than the 50 Hz driving sim. Everything is seeded; none of the uncalibrated values
+is an F1 figure (each says so in `config.py`).
+
+| Piece | Where | What it does |
+|---|---|---|
+| Race model | `src/f1rl/models/race.py` | Pure functions: race length (fewest laps over 305 km, FIA), a car's lap (compound grip, tyre wear, push level, fuel, dirty air, pit loss), and cars meeting on track (`resolve_lap`: a quicker car passes with odds that grow with its pace advantage, or follows 0.3 s behind; a car in the pits passes and is passed freely). |
+| Stand-in driver | `LapTable` in `models/race.py` | Limit lap on the track's optimal line (g-g simulator) over grip x fuel, times 1.011 (our PathDriver's measured gap). Fuel only lowers acceleration (same force, more mass). Cached per track under `data/strategy/`. |
+| Parameters | `StrategyParams`, `CompoundParams`, `StrategyRewardParams`, `StrategyBaselineParams` in `config.py` | Cited: 305 km, 110 kg fuel, two-compound rule. Uncalibrated design choices: compound grip and life, pit loss 22 s, push span 0.92-0.95 of grip, attack wears tyres 3x faster than conserve, car pace spread +/-1.5%, overtaking odds. |
+| Environment | `src/f1rl/envs/strategy_env.py` | `StrategyEnv`: one Grand Prix, one step per lap. Action `[pit: stay/soft/medium/hard, push level 0-4]`; the first action picks the starting tyres for free. 20 observations (race progress, place, gaps, tyres, fuel, rule met, rivals' tyres). Reward: -0.1 per second slower than a reference lap, +1 per place gained, -0.5 per final place behind the winner, -50 if only one compound was used. |
+| Rule-based strategy | `src/f1rl/agents/strategy_baseline.py` | `FixedPlan`: medium -> hard at 45% distance, normal push, early stop if wear > 0.8. Rivals draw variants (M-H, H-M, S-H, S-M-H) with random stop laps and push. |
+| Trainer and comparison | `src/f1rl/agents/strategy.py`, `configs/strategy_ppo.yaml` | `uv run python -m f1rl.train --config configs/strategy_ppo.yaml` trains PPO (train tracks, checkpoint chosen on validation tracks). `uv run python -m f1rl.agents.strategy --policy baseline --policy random --policy <model.zip>` runs paired races (same seed = same rivals and grid). |
+| Tests | `tests/test_race.py`, `tests/test_strategy_env.py` | On a synthetic oval, no download needed. |
+
+**Cloud pilot (2026-10-29, `configs/strategy_ppo.yaml`, 300k laps, seed 0, ~20 min
+on 4 cores).** Paired races, 10 cars, stand-in driver:
+
+| | validation (12 races) | held-out (20 races) |
+|---|---|---|
+| rule-based M->H one-stop | place 4.17 | place 4.50, 4476.5 s |
+| random | - | place 9.15, 90% legal |
+| PPO (best = last checkpoint, still improving) | place 2.75, 11 s quicker | place 4.20, 6 s quicker, 100% legal |
+
+It learned a two-stop race: conserve early, push before a stop, softs in the middle
+stint. It beats the rule-based plan on unseen tracks, by less than on validation.
+This only says the env is learnable; the numbers mean nothing for F1 until the
+compounds are calibrated and the real driver is plugged in.
+
+**On our driver (2026-10-30).** `scripts/measure_driver.py` drove the defend run 2
+driver (`runs/defend_sections_v2/model_best.zip`) on all 25 tracks: 225 solo laps
+and 1,512 one-lap battles, 0 contacts, 0.4% off track. Result
+(`configs/driver_profiles/defend_v2.json`):
+
+- Pace: laps 9.0% off the g-g limit on average (aero drag plus the moves), so all
+  lap times scale up; the field is assumed to drive like ours.
+- Attack (vs the scripted `guard_*` defenders): 50% chance of a pass in a lap only
+  with a 4.9 s/lap pace advantage. Equal pace: 10/72 on new tyres, 0/144 on worn.
+- Defend (vs tactician, fast tactician, attacker, frozen main driver): passed 50%
+  of the time at a 1.0 s/lap attacker advantage. New tyres: held 214/288.
+
+Run `configs/strategy_driver.yaml` (1.5M laps, laptop, ~15 min; 26 inputs incl.
+where a stop would rejoin). Best checkpoint at 1.05M laps: validation place 5.08
+vs 6.71 for the rule-based plan. Held-out, 40 paired races, 10 cars:
+
+| | place | race time | undercuts / race | undercut on us |
+|---|---|---|---|---|
+| rule-based M->H at 45% | 6.80 | 4859.0 s | 0.28 | 0.05 |
+| random | 9.60 | 4927.9 s (95% legal) | | |
+| **strategy agent** | **6.03** | **4854.5 s** | 0.30 | 0.00 |
+
+Better than the rule-based plan in 22 races, same in 12, worse in 6 (+0.78 places
+a race). What it learned: always medium -> hard, one stop (stop between 43% and 59%
+of the race, timed to the cars around it), conserve the tyres most of the race
+(push 0 on 58% of laps) and push in the laps before the stop. Because our driver
+needs ~5 s/lap more pace to pass, track position is worth more than fresh tyres,
+so extra stops never paid. No overcuts were counted for any strategy: the race
+model has no cold-tyre out-lap, so staying out rarely wins a place.
+
+**Racing to win against baseline drivers (2026-10-30, `configs/strategy_win.yaml`).**
+User ask: win every race, against rivals that all run the rule-based plan, with tyre
+delta, pit window, tyre life and laps remaining as inputs. Changes:
+
+- 38 inputs: lap-time delta of fresh soft/medium/hard vs our current tyres, our tyres
+  vs the cars just ahead and behind, tyre life left vs laps to go, the pit window per
+  compound (can it reach the flag), compounds used so far.
+- `rivals: baseline`: all 9 rivals run the rule-based M->H plan, each stop moved by
+  up to +/-5% of the race (`rival_stop_jitter`), equal cars (`car_pace_spread: 0`).
+- Reward: `finish_weight 1.0`, `win_bonus 20` paid at the flag for a legal win;
+  checkpoint chosen by wins (`select_by: wins`).
+
+2M laps on the laptop (~20 min). Best checkpoint (1.65M laps) won 67% of 30
+validation races; the rule-based plan wins 3% in the same field. Held-out, 40 paired
+races, 10 cars, our measured driver:
+
+| | wins | podiums | place | undercuts / race | undercut on us |
+|---|---|---|---|---|---|
+| rule-based M->H at 45% | 10% | 33% | 5.47 | 0.53 | 0.38 |
+| random | 0% | 0% | 10.0 (95% legal) | | |
+| **strategy agent** | **72%** | **95%** | **1.52** | 0.50 | 0.00 |
+
+Better than the rule-based plan in 36 of 40 races, same in 4, never worse (+3.95
+places a race). What it learned: always medium -> hard, one stop at 36-42% of the
+race (earlier than every rival), normal push on 75% of laps, a little conserve, a
+little attack at the end. It drops to the back on the stop lap, then takes the lead
+back as the rivals stop later on older tyres: a race-long undercut on the whole field.
+
+Why not 100%, and what this depends on: (1) rivals follow a fixed plan and never
+cover an early stop, real teams would; (2) the race model has no cold-tyre out-lap,
+which makes an early stop cheaper than it is; (3) with equal cars and a driver that
+needs ~5 s/lap more pace to pass, a race lost at the start or in traffic cannot be
+won back on track. Compounds and pit loss are still uncalibrated.
+
+**Rain (2026-10-31, `configs/strategy_rain.yaml`).** User ask: the strategist must
+learn when to pit in the rain. Added (`src/f1rl/models/weather.py`, all values
+uncalibrated design choices in `WeatherParams`):
+
+- A shower per wet race (60% of training races): track wetness 0..1 rises toward the
+  shower's strength while it rains and dries 0.06 a lap after.
+- Intermediates and full wets. Grip vs wetness: slicks lose 60% when soaked,
+  intermediates best around 45% wetness, wets best when soaked; crossovers near 30%
+  (slick/inter) and 70% (inter/wet). Wet tyres wear up to 4x faster on a drying track.
+- FIA tyre rule: running a wet-weather tyre waives the two-dry-compound requirement.
+- Rivals and the rule-based plan switch by thresholds on the wetness seen last lap
+  (inters > 30%, wets > 70%, slicks < 25%, each team +/- 5%).
+- 11 more inputs: wetness, raining, forecast 3 and 6 laps ahead (noisy), our wet
+  tyre, lap gain of fresh inters / wets, rivals on wet tyres, wet tyre used, overheating.
+
+3M laps on the laptop (~35 min). Held-out, 40 paired races each:
+
+| | wins | podiums | place |
+|---|---|---|---|
+| rain races, rule-based plan | 0% | 17% | 5.70 |
+| **rain races, strategy agent** | **68%** | **85%** | **2.38** |
+| dry races, rule-based plan | 10% | 17% | 6.15 |
+| dry races, rain-trained agent | 25% | 80% | 2.98 |
+
+In the rain it stops on average about a lap before the rivals (it reads the forecast;
+they react to the last lap), goes to intermediates and mostly skips full wets, then
+back to slicks once the track dries. Its usual plans: M-I-M, M-H-I-M, M-I-H. In dry
+races it wins less than the dry-only agent (25% vs 72%), so for now use
+`strategy_win` in the dry and `strategy_rain` when rain is possible. On-track
+passes stay rare (0.15 places a race gained on laps with no stops): that is the
+driver's overtaking, worked on separately.
+
+**Fastest car from P10 (2026-10-31).** User ask: our car is the quickest, starts
+10th, and must win with on-track passes plus pit calls. `StrategyParams.our_pace`
+(our grip vs the field) and `grid_slot`; `StrategyEnv` counts places won and lost
+on track (laps where neither car pitted). Held-out, 40 races each:
+
+| scenario | strategy | wins | podiums | place | on-track passes / race |
+|---|---|---|---|---|---|
+| 3% faster, measured driver (`strategy_fast.yaml`) | rule-based | 30% | 45% | 4.0 | 4.3 |
+| | **agent** | **88%** | **100%** | **1.15** | 1.1 |
+| 0.5% faster, better overtaker (`strategy_fast_skill.yaml`) | rule-based | 15% | 78% | 2.7 | 7.8 |
+| | **agent** | **45%** | 72% | 2.7 | **11.4** |
+
+With today's measured overtaking the agent avoids traffic: it pits for softs on
+laps 2-4, runs in clean air, stops again at 35-40% and jumps the field when it pits.
+With a better overtaker (`attack_skill_s 3.4`: a pass is a coin flip at a 1.5 s/lap
+edge, the target for the driver thread) it races through the field instead: M-S-H,
+stops at ~35% and ~60%, more passes and three times the rule-based win rate, but the
+same average place (it takes more risk). A 3% car with that overtaker was too easy:
+both strategies won every race. The driver thread reports the measured attack
+curve was mis-measured and fixes sim bugs; re-measure the driver after that.
+
+**Correction (2026-11-01):** in this sim our grip edge is worth less lap time than
+first written: 1% grip is ~0.3 s/lap, 3% ~0.9 s/lap, 0.5% ~0.15 s/lap on the
+held-out tracks (lap table at normal push on mediums).
+
+**Why the fast-car agents two-stopped.** In clean air our uncalibrated tyre model
+makes a two-stop 1-12 s faster than the best one-stop on four of the five held-out
+tracks (Suzuka is the exception: medium-hard one-stop is fastest). With today's
+measured overtaking, passing also looks costly, so the 3% agent pits on laps 2-4 to
+buy clean air. Real tyre numbers (FastF1, laptop) would settle the one-stop vs
+two-stop question; until then it is a property of the design values.
+
+**Fastest car, win only (2026-11-01, `strategy_fast_win.yaml`).** User ask: our
+car is the fastest and can overtake, start 10th, train to win and nothing else.
+1% more grip, `attack_skill_s 3.4`, grid 10. Reward: +10 for a win, -10 for
+breaking the two-compound rule, nothing else. A random policy pits on 3 laps in 4
+and never wins, so a win-only reward gives it nothing to learn from;
+`run.stay_out_prior 5` biases the untrained policy towards staying out (a starting
+prior, not a reward). Trained in the cloud (1.5M laps, 4 envs; validation wins
+100% from 150k laps). Held-out: **200/200 wins** (rule-based plan in the same car
+91%), average place 1.0 vs 1.11, 6.5 on-track passes a race. The plan it found is a
+medium-hard one-stop at ~35% of the race, 1-6 laps before the first rival stops
+(an undercut on the whole field), Save+ in clean air, Attack when a car is within
+reach.
+
+**Spin or puncture (2026-11-01, `strategy_recover.yaml`).**
+`StrategyParams.incidents` (`StrategyIncidentParams`, off by default): on one
+drawn lap (10-85% of the race) our car spins (6-15 s, +5% tyre wear for a flat
+spot) or gets a puncture (15-30 s limping to the pits, then a forced stop next
+lap; the agent picks the compound). Four extra observation inputs (spun,
+punctured, time lost, must stop). Scenario values, uncalibrated. Same car as
+above, an incident every race. A win-only reward (+10, -1 per place) did not
+learn (P10, pitting every lap); the dense recipe of `strategy_win.yaml` did.
+Held-out, 200 races:
+
+| | place | wins | podiums | after a spin: place / wins | after a puncture: place |
+|---|---|---|---|---|---|
+| rule-based | 8.1 | 3% | 13% | 6.7 / 5% | 9.9 |
+| **agent** | **6.9** | **14%** | **28%** | **5.1 / 25%** | 9.1 |
+
+After a late spin it pits next lap for fresh mediums and attacks; after an early
+one it keeps medium-hard and adds a late stop for mediums. A puncture (time lost +
+a stop = 40-50 s) cannot be won back with a 0.3 s/lap edge.
+
+**Win in every case (2026-11-01, `strategy_all.yaml`, `strategy_all_dominant.yaml`).**
+User ask: decide like "the fastest way to finish the race", fewer stops when
+behind, handle safety cars and VSCs, win in every case. Added `NeutralParams`
+(SC / VSC periods: same slow lap for everyone, no passing, stops cost 12 s / 14 s
+instead of 22 s, SC closes gaps; the rule-based cars bring a near stop forward) and
+`StrategyParams.min_stint_laps` (no new stop within 5 laps of the last; a first
+agent stopped on 2-3 SC laps in a row). One agent per car, trained on a mix: 40%
+races with a spin or puncture, 30% SC, 20% VSC. Reward: -0.1 per second of race
+time (the fastest way to the flag) + 20 for a win (+ two-compound rule). Held-out,
+200 races per case, wins (agent / rule-based):
+
+| case | 1% faster car (0.3 s/lap) | 3% faster car (0.9 s/lap) |
+|---|---|---|
+| clean | **96%** / 91% | 100% / 100% |
+| spin | **29%** / 4.5% | **99.5%** / 98% |
+| puncture | 0% / 0% | **56%** / 44% |
+| safety car | **94.5%** / 89.5% | 99.5% / 100% |
+| VSC | 88.5% / 89% | 100% / 100% |
+
+Fewer stops after an incident is not faster in this tyre model: in the earlier
+recovery runs the extra stop was 3-6 s quicker to the flag than staying out. With a
+time reward the agent now adds a stop only when it pays (1.06 stops after a spin
+vs 2.0 for the earlier recovery agent). A puncture costs 15-30 s plus a stop; a
+0.3 s/lap edge cannot win that back, so winning every case needs a faster car (at
+5% the rule-based plan wins ~97% after punctures). The 1% agent shown is the run
+trained without `min_stint_laps`, evaluated with it on (it scored a little better
+than the run trained with it: SC 94.5% vs 86%). SC / VSC and incident numbers are
+scenario values, not F1 data.
+
+**Racing line and driver modes on the replay page.** The replay page draws each
+held-out track's edges and the minimum-curvature racing line coloured by limit
+speed (`models.raceline.optimal_line`), runs a lap on it in real time, and puts
+the cars on that line. It also explains the five push modes the Strategy Agent
+sends (grip 92-95%, wear 0.58-1.73x Normal). The trained driver does not take a
+mode input yet; in the race sim the mode scales the driver's measured lap.
+
+**Plugging in the real driver later.** Two hooks: (1) replace each track's
+`LapTable` with one measured from the trained driver (lap time at each grip level
+and fuel load); (2) set `attack_skill_s` / `defend_skill_s` (or refit
+`pass_delta_s` / `pass_slope_s`) from the driver's measured pass and defend rates.
+Then re-run the comparison; a strategy trained on the stand-in should be
+fine-tuned on the real driver's numbers.
+
+**One agent for every case (`configs/strategy_master.yaml`, 2026-11-01).** 1%
+faster car (0.3 s/lap), always from P10, the stand-in good overtaker (skill 3.4).
+Trained 4M laps on a mix of: clean races, a spin or puncture (35%), rain (25%),
+SC (30%, 2-6 laps, up to two periods), VSC (15%), red flag (5%), with restarts
+where a car with overtake mode charged passes more easily. New since `strategy_all`:
+
+- **No early stops by choice** (`min_stop_fraction` 0.25): refused unless a
+  safety car / VSC / red flag makes the stop cheap, the tyres are past 70% wear
+  (`early_stop_wear`), the weather calls for another tyre type, or after a spin.
+  `min_stint_laps` 5 as before.
+- **Sanity rules** (`late_stop_laps` 4, `wet_tyre_min_wetness` 0.05): no stop by
+  choice in the last 4 laps (a replay showed a stop 2 laps from the flag while P2),
+  and no intermediates / wets on a dry track (one showed full wets under a red flag
+  in a dry race).
+- **Red flag**: every car, ours too, gets a free tyre change (before, only rivals did).
+- **Rivals' pace** (`pace_obs`): last lap of the cars ahead and behind, the leader
+  and the field, against ours.
+- **Overtake mode** (`ErsParams`, a third action): spend battery for -0.15 s on the
+  lap and a better chance to pass or hold position. Battery and gains are design
+  values, not F1 data.
+- Reward: -0.1 per second of race time + 30 for a win (+ two-compound rule).
+
+Held-out tracks, 200 races per case (seeds 70000-70199, track = seed index mod 5),
+`model_best.zip` (best on validation wins), sanity rules on. Files:
+`runs/strategy_master/eval_guard/*.json` (copies in
+`/mnt/project-files/strategy_models/strategy_master/`).
+
+| case | agent wins | rule-based wins | agent avg finish | rule-based avg finish |
+|---|---|---|---|---|
+| clean | **100%** | 99% | 1.00 | 1.01 |
+| spin | **38.5%** | 13% | **3.42** | 5.24 |
+| puncture | **5.5%** | 0.5% | **8.06** | 9.70 |
+| safety car | **95.5%** | 93.5% | 1.16 | 1.08 |
+| two safety cars | **94.5%** | 93% | 1.14 | 1.15 |
+| VSC | 91% | **96%** | 1.45 | 1.04 |
+| red flag | **98%** | 97.5% | 1.08 | 1.02 |
+| rain | **89.5%** | 66.5% | **1.58** | 2.56 |
+
+Suzuka in the rain alone (100 races from P10, seeds 80000-80099): 87% wins vs 63%,
+and never finishes behind its grid slot. Not every case is won: after a puncture
+(15-30 s plus a stop) a 0.3 s/lap edge cannot win back the time, and on the VSC the
+agent often takes the cheaper stop and then loses time passing cars on track. The
+final checkpoint (`model_final.zip`) is better after a spin (48%) but worse in the
+other cases. Incident, SC / VSC / red-flag and overtake-mode numbers are scenario
+values, not F1 data.
+
+**Not built yet:** fuel-saving mode, lapped traffic and blue flags, sending the push
+level and overtake mode to the driver's observation.

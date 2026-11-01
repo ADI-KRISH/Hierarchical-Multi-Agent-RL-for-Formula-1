@@ -1,0 +1,7 @@
+{
+  "seed": 0,
+  "git_sha": "ef2dc35f95374ec93634c11068322082d39b7cef",
+  "python": "3.12.3",
+  "torch": "2.14.0+cu130",
+  "stable_baselines3": "2.9.0"
+}

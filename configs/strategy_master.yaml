@@ -1,0 +1,84 @@
+# EVERY CASE, ONE AGENT (2026-11-01). User: a realistic car, no early stops
+# unless there is a safety car or the tyres are finished, more safety-car cases
+# and restarts, rain, read the rivals' pace, call the on-track passes, and win
+# every case. Our car has 1% more grip than the field (~0.3 s a lap on the
+# held-out tracks), starts 10th, and our driver overtakes well (attack_skill_s
+# 3.4: a pass is a coin flip at a 1.5 s/lap edge; the driver thread's target).
+# Races mix: rain (25%), our spin or puncture (35%), safety car (30%) or VSC
+# (15%) with a chance of a second period, red flags (5%), green-flag restarts.
+# The agent sees the rivals' last-lap pace and has an overtake mode (a battery
+# that one attack lap uses half of). No stop by choice before 25% of the race
+# unless under SC / VSC / red flag, on tyres past 70% wear, for a weather change
+# or after damage. Reward: -0.1 per second of race time + 30 for a win (before,
+# strategy_all: +20). Rain, incident, SC, red-flag and overtake-mode numbers are
+# scenario settings, not F1 data.
+strategy: true
+
+run:
+  name: strategy_master
+  seed: 0
+  total_timesteps: 4000000    # laps, summed over all envs (~60 laps a race)
+  n_envs: 4
+  eval_every_steps: 100000
+  eval_races: 40
+  train_tracks: train
+  eval_tracks: validation
+  driver_profile: configs/driver_profiles/defend_v2.json
+  subproc: true
+  select_by: wins
+  stay_out_prior: 5.0
+
+env:
+  n_cars: 10
+  pit_loss_s: 22.0
+  min_stint_laps: 5
+  min_stop_fraction: 0.25
+  early_stop_wear: 0.7
+  late_stop_laps: 4
+  wet_tyre_min_wetness: 0.05
+  pace_obs: true
+  rivals: baseline
+  rival_stop_jitter: 0.05
+  car_pace_spread: 0.0
+  our_pace: 1.01
+  grid_slot: 10
+  attack_skill_s: 3.4
+  wet_tyres: true
+  grip_min: 0.35
+  weather:
+    rain_chance: 0.25
+  incidents:
+    chance: 0.35
+    puncture_share: 0.5
+  neutral:
+    sc_chance: 0.3
+    vsc_chance: 0.15
+    lap_range: [0.05, 0.9]
+    sc_laps: [2, 6]
+    max_periods: 2
+    second_chance: 0.3
+    red_chance: 0.05
+    restart_attack_s: 0.5
+  ers:
+    enabled: true
+  reward:
+    time_weight: 0.1
+    position_weight: 0.0
+    finish_weight: 0.0
+    rule_penalty: 50.0
+    win_bonus: 30.0
+
+baseline:
+  stints: [medium, hard]
+  stop_fractions: [0.45]
+  push_index: 2
+  max_wear: 0.8
+
+ppo:
+  learning_rate: 0.0003
+  n_steps: 512
+  batch_size: 256
+  n_epochs: 10
+  gamma: 0.995
+  gae_lambda: 0.95
+  ent_coef: 0.01

@@ -1,0 +1,26 @@
+{
+ "clean|baseline": {
+  "wins": 0.99,
+  "pos": 1.01,
+  "stops": 1.0,
+  "time": 4830.8709077531375
+ },
+ "clean|runs/strategy_master/model_best.zip": {
+  "wins": 1.0,
+  "pos": 1.0,
+  "stops": 1.37,
+  "time": 4824.295330395232
+ },
+ "spin|baseline": {
+  "wins": 0.13,
+  "pos": 5.235,
+  "stops": 1.0,
+  "time": 4845.346476291864
+ },
+ "spin|runs/strategy_master/model_best.zip": {
+  "wins": 0.385,
+  "pos": 3.42,
+  "stops": 1.52,
+  "time": 4841.211732450017
+ }
+}

@@ -1,0 +1,451 @@
+"""PPO for `StrategyEnv` (the Strategy Agent), and races against the baseline.
+
+Train: ``uv run python -m f1rl.train --config configs/strategy_ppo.yaml`` (a YAML
+with ``strategy: true``). A run writes into ``runs/<name>/``: ``config.yaml``,
+``meta.json`` (seed, git SHA), ``eval.csv`` and ``model_best.zip`` (best mean
+finishing place on the VALIDATION tracks) plus ``model_final.zip``.
+
+Compare: ``uv run python -m f1rl.agents.strategy --policy baseline --split
+validation --races 10`` (or ``random``, or a model .zip). Every race is paired:
+the same seed gives the same rivals, grid and track for each policy, so the
+difference is the strategy alone.
+
+The driver in these races is the stand-in (`models.race.LapTable`), not the
+trained Driver Agent: results say how good the strategy is in this race model.
+"""
+
+import argparse
+import csv
+import json
+import platform
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field, fields, replace
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import yaml
+
+from f1rl.agents.strategy_baseline import FixedPlan
+from f1rl.config import (
+    EXAMPLE_CAR,
+    TYRES,
+    CompoundParams,
+    ErsParams,
+    NeutralParams,
+    StrategyBaselineParams,
+    StrategyIncidentParams,
+    StrategyParams,
+    StrategyRewardParams,
+    WeatherParams,
+)
+from f1rl.driver_profile import DriverProfile, load_profile, save_profile
+from f1rl.envs.racetrack import TUM_HELD_OUT, TUM_TRAIN, TUM_VALIDATION
+from f1rl.envs.strategy_env import StrategyEnv, load_race_track
+from f1rl.models.weather import tyre_class
+
+Policy = Callable[[StrategyEnv, Any], Any]
+
+SPLITS: dict[str, tuple[str, ...]] = {
+    "train": TUM_TRAIN,
+    "validation": TUM_VALIDATION,
+    "held_out": TUM_HELD_OUT,
+}
+
+
+@dataclass(frozen=True)
+class StrategyRun:
+    name: str
+    seed: int
+    total_timesteps: int
+    n_envs: int = 8
+    eval_every_steps: int = 20_000
+    eval_races: int = 12  # per evaluation, spread over the validation tracks
+    train_tracks: str = "train"
+    eval_tracks: str = "validation"
+    # Our driver, measured (`scripts/measure_driver.py`): JSON profile path.
+    # Empty = the stand-in driver.
+    driver_profile: str = ""
+    # One process per env (faster with many cores); False = all in this process.
+    subproc: bool = False
+    # Keep the checkpoint with the best mean place ("position") or most wins.
+    select_by: str = "position"
+    # Added to the untrained policy's "stay out" logit, so a fresh agent mostly
+    # stays out instead of pitting on 3 laps in 4. Needed when the reward is only
+    # the win (no lap-time signal tells a random agent that a stop costs time).
+    # A starting prior on the policy, not a reward; 0 = off.
+    stay_out_prior: float = 0.0
+
+
+@dataclass(frozen=True)
+class StrategyConfig:
+    run: StrategyRun
+    env: dict[str, Any] = field(default_factory=dict)
+    baseline: dict[str, Any] = field(default_factory=dict)
+    ppo: dict[str, Any] = field(default_factory=dict)
+
+    def strategy_params(self, tracks: tuple[str, ...] = ()) -> StrategyParams:
+        raw = dict(self.env)
+        for name in TYRES:
+            if name in raw:
+                raw[name] = CompoundParams(**raw[name])
+        if "weather" in raw:
+            w = dict(raw["weather"])
+            for key in ("start_range", "length_range", "intensity_range"):
+                if key in w:
+                    w[key] = tuple(w[key])
+            raw["weather"] = WeatherParams(**w)
+        if "ers" in raw:
+            raw["ers"] = ErsParams(**raw["ers"])
+        if "neutral" in raw:
+            neu = dict(raw["neutral"])
+            for key in ("lap_range", "sc_laps", "vsc_laps"):
+                if key in neu:
+                    neu[key] = tuple(neu[key])
+            raw["neutral"] = NeutralParams(**neu)
+        if "incidents" in raw:
+            inc = dict(raw["incidents"])
+            for key in ("lap_range", "spin_loss_range", "puncture_loss_range"):
+                if key in inc:
+                    inc[key] = tuple(inc[key])
+            raw["incidents"] = StrategyIncidentParams(**inc)
+        if "reward" in raw:
+            raw["reward"] = StrategyRewardParams(**raw["reward"])
+        for key in ("push_levels",):
+            if key in raw:
+                raw[key] = tuple(raw[key])
+        return StrategyParams(**{**raw, "tracks": tracks})
+
+    def baseline_params(self) -> StrategyBaselineParams:
+        raw = dict(self.baseline)
+        for key in ("stints", "stop_fractions"):
+            if key in raw:
+                raw[key] = tuple(raw[key])
+        return StrategyBaselineParams(**raw)
+
+
+def load_strategy_config(path: Path) -> StrategyConfig:
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    unknown = set(raw) - {f.name for f in fields(StrategyConfig)} - {"strategy"}
+    if unknown:
+        raise ValueError(f"unknown config sections: {sorted(unknown)}")
+    config = StrategyConfig(
+        run=StrategyRun(**raw["run"]),
+        env=raw.get("env") or {},
+        baseline=raw.get("baseline") or {},
+        ppo=raw.get("ppo") or {},
+    )
+    config.strategy_params()
+    config.baseline_params()
+    return config
+
+
+def load_tracks(
+    names: tuple[str, ...],
+    params: StrategyParams,
+    profile: DriverProfile | None = None,
+) -> dict[str, Any]:
+    return {n: load_race_track(n, EXAMPLE_CAR, params, profile=profile) for n in names}
+
+
+# --- policies ------------------------------------------------------------------------
+
+
+def baseline_policy(env: StrategyEnv, obs: Any) -> Any:
+    """Our car runs the rule-based plan (`StrategyEnv.baseline`)."""
+    plan = FixedPlan(env.baseline)
+    if env.lap == 0:
+        start = plan.start_compound
+        if env.params.wet_tyres and env.seen_wetness() > 0.0:
+            start = (
+                plan.plan(
+                    env.params, env.cars[0], 0, env.total_laps, env.seen_wetness()
+                ).pit_to
+                or start
+            )
+        return with_ers(env, [env.tyres.index(start) + 1, plan.params.push_index])
+    if env.neutral_now() == "red":
+        # Red flag: a free set. The next planned compound, or a fresh one of these.
+        stint = env.cars[0].stops
+        nxt = plan.params.stints[min(stint + 1, len(plan.params.stints) - 1)]
+        if env.params.wet_tyres and tyre_class(env.cars[0].compound) != "slick":
+            nxt = env.cars[0].compound
+        return with_ers(env, [env.tyres.index(nxt) + 1, plan.params.push_index])
+    lap = plan.plan(
+        env.params,
+        env.cars[0],
+        env.lap,
+        env.total_laps,
+        env.seen_wetness(),
+        env.neutral_now() is not None,
+    )
+    pit = 0 if lap.pit_to is None else env.tyres.index(lap.pit_to) + 1
+    return with_ers(env, [pit, plan.params.push_index])
+
+
+def with_ers(env: StrategyEnv, action: list[int]) -> Any:
+    """Add the rule-based overtake-mode call when the env has one: use it when the
+    car ahead is within a second and the battery holds a full use."""
+    if not env.params.ers.enabled:
+        return np.array(action)
+    pos = env.order.index(0)
+    near = pos > 0 and env.cars[0].time_s - env.cars[env.order[pos - 1]].time_s < 1.0
+    return np.array([*action, int(near and env.battery >= env.params.ers.cost)])
+
+
+def random_policy(seed: int) -> Policy:
+    rng = np.random.default_rng(seed)
+
+    def act(env: StrategyEnv, obs: Any) -> Any:
+        # Mostly stay out: a uniform pit choice would stop three laps in four.
+        pit = int(rng.integers(1, len(env.tyres) + 1)) if rng.random() < 0.05 else 0
+        push = int(rng.integers(len(env.params.push_levels)))
+        return with_ers(env, [pit, push])
+
+    return act
+
+
+def model_policy(model: Any) -> Policy:
+    def act(env: StrategyEnv, obs: Any) -> Any:
+        return model.predict(obs, deterministic=True)[0]
+
+    return act
+
+
+def race(
+    env: StrategyEnv,
+    policy: Policy,
+    seed: int,
+    track: str,
+    rain: bool | None = None,
+) -> dict[str, Any]:
+    """One race; returns the final info plus the lap-by-lap history. ``rain``
+    forces a wet (True) or dry (False) race when the env has wet tyres."""
+    opts: dict[str, Any] = {"track": track}
+    if rain is not None:
+        opts["rain"] = rain
+    obs, info = env.reset(seed=seed, options=opts)
+    done = False
+    while not done:
+        obs, _, done, _, info = env.step(policy(env, obs))
+    return {**info, "history": list(env.history)}
+
+
+def compare(
+    env: StrategyEnv,
+    policies: dict[str, Policy],
+    tracks: tuple[str, ...],
+    races: int,
+    seed: int,
+    rain: bool | None = None,
+) -> dict[str, dict[str, float]]:
+    """Paired races (same seed and track for every policy): mean finishing place,
+    mean race time, share of legal (two-compound) races and mean stops. ``rain``
+    forces every race wet or dry (wet-tyre envs only)."""
+    out: dict[str, dict[str, float]] = {}
+    for name, policy in policies.items():
+        results = [
+            race(env, policy, seed + i, tracks[i % len(tracks)], rain)
+            for i in range(races)
+        ]
+        out[name] = {
+            "position": float(np.mean([r["position"] for r in results])),
+            "race_time_s": float(np.mean([r["race_time_s"] for r in results])),
+            "legal": float(np.mean([r["legal"] for r in results])),
+            "stops": float(np.mean([r["stops"] for r in results])),
+            "wins": float(np.mean([r["position"] == 1 for r in results])),
+            "podiums": float(np.mean([r["position"] <= 3 for r in results])),
+            **{
+                k: float(np.mean([r[k] for r in results]))
+                for k in (
+                    "undercuts",
+                    "overcuts",
+                    "undercut_on_us",
+                    "overcut_on_us",
+                    "track_passes",
+                    "track_passed",
+                )
+            },
+            "rain_races": float(np.mean([r["rain"] for r in results])),
+        }
+        wet = [r for r in results if r["rain"]]
+        if wet:
+            out[name]["rain_wins"] = float(np.mean([r["position"] == 1 for r in wet]))
+            out[name]["rain_position"] = float(np.mean([r["position"] for r in wet]))
+    return out
+
+
+# --- training ------------------------------------------------------------------------
+
+
+def train(config: StrategyConfig, run_dir: Path) -> None:
+    import stable_baselines3
+    import torch
+    from stable_baselines3 import PPO
+    from stable_baselines3.common.callbacks import BaseCallback
+    from stable_baselines3.common.env_util import make_vec_env
+    from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
+
+    from f1rl.agents.ppo import git_sha
+
+    run = config.run
+    train_names = SPLITS.get(run.train_tracks, (run.train_tracks,))
+    eval_names = SPLITS.get(run.eval_tracks, (run.eval_tracks,))
+    params = config.strategy_params(train_names)
+    base = config.baseline_params()
+    profile = load_profile(Path(run.driver_profile)) if run.driver_profile else None
+    train_tracks = load_tracks(train_names, params, profile)
+    eval_env = StrategyEnv(
+        load_tracks(eval_names, params, profile), params, baseline=base, profile=profile
+    )
+
+    run_dir.mkdir(parents=True)
+    if profile is not None:
+        save_profile(profile, run_dir / "driver_profile.json")
+    (run_dir / "config.yaml").write_text(
+        yaml.safe_dump({"strategy": True, **asdict(config)}), encoding="utf-8"
+    )
+    (run_dir / "meta.json").write_text(
+        json.dumps(
+            {
+                "seed": run.seed,
+                "git_sha": git_sha(),
+                "python": platform.python_version(),
+                "torch": torch.__version__,
+                "stable_baselines3": stable_baselines3.__version__,
+            },
+            indent=2,
+        )
+    )
+
+    vec = make_vec_env(
+        lambda: StrategyEnv(train_tracks, params, baseline=base, profile=profile),
+        n_envs=run.n_envs,
+        seed=run.seed,
+        vec_env_cls=SubprocVecEnv if run.subproc else DummyVecEnv,
+    )
+    model = PPO("MlpPolicy", vec, seed=run.seed, verbose=0, **config.ppo)
+    if run.stay_out_prior:
+        with torch.no_grad():
+            # MultiDiscrete logits: the pit choices come first, 0 = stay out.
+            head = model.policy.action_net
+            assert isinstance(head, torch.nn.Linear)
+            head.bias[0] += run.stay_out_prior
+    ref = compare(
+        eval_env, {"baseline": baseline_policy}, eval_names, run.eval_races, 10_000
+    )["baseline"]
+    print(f"baseline on {run.eval_tracks}: {ref}")
+
+    class Evaluate(BaseCallback):
+        def __init__(self) -> None:
+            super().__init__()
+            self.best = float("inf")
+            self.next_eval = run.eval_every_steps
+            self.csv = run_dir / "eval.csv"
+            with self.csv.open("w", newline="") as f:
+                csv.writer(f).writerow(
+                    [
+                        "steps",
+                        "position",
+                        "race_time_s",
+                        "legal",
+                        "stops",
+                        "wins",
+                        "baseline_position",
+                        "baseline_race_time_s",
+                        "baseline_wins",
+                    ]
+                )
+
+        def _on_step(self) -> bool:
+            if self.num_timesteps < self.next_eval:
+                return True
+            self.next_eval += run.eval_every_steps
+            res = compare(
+                eval_env,
+                {"model": model_policy(self.model)},
+                eval_names,
+                run.eval_races,
+                10_000,
+            )["model"]
+            with self.csv.open("a", newline="") as f:
+                csv.writer(f).writerow(
+                    [
+                        self.num_timesteps,
+                        res["position"],
+                        res["race_time_s"],
+                        res["legal"],
+                        res["stops"],
+                        res["wins"],
+                        ref["position"],
+                        ref["race_time_s"],
+                        ref["wins"],
+                    ]
+                )
+            print(f"{self.num_timesteps:>9,}: {res}")
+            # Illegal races are disqualified: rank them last.
+            score = res["position"] + (1.0 - res["legal"]) * params.n_cars
+            if run.select_by == "wins":  # most wins; finishing place breaks ties
+                score += -res["wins"] * 100.0
+            if score < self.best:
+                self.best = score
+                self.model.save(run_dir / "model_best.zip")
+            return True
+
+    model.learn(total_timesteps=run.total_timesteps, callback=Evaluate())
+    model.save(run_dir / "model_final.zip")
+
+
+# --- CLI -----------------------------------------------------------------------------
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Race strategies against each other.")
+    parser.add_argument(
+        "--policy",
+        action="append",
+        default=None,
+        help="baseline, random or a model .zip (repeat to compare several).",
+    )
+    parser.add_argument("--split", default="validation", choices=sorted(SPLITS))
+    parser.add_argument("--races", type=int, default=10)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--n-cars", type=int, default=None)
+    parser.add_argument("--json", type=Path, default=None, help="Write results here.")
+    parser.add_argument(
+        "--profile", type=Path, default=None, help="Our driver, measured (JSON)."
+    )
+    args = parser.parse_args()
+
+    tracks = SPLITS[args.split]
+    params = StrategyParams(tracks=tracks)
+    if args.n_cars:
+        params = replace(params, n_cars=args.n_cars)
+    profile = load_profile(args.profile) if args.profile else None
+    env = StrategyEnv(load_tracks(tracks, params, profile), params, profile=profile)
+    policies: dict[str, Policy] = {}
+    for spec in args.policy or ["baseline", "random"]:
+        if spec == "baseline":
+            policies[spec] = baseline_policy
+        elif spec == "random":
+            policies[spec] = random_policy(args.seed)
+        else:
+            from stable_baselines3 import PPO
+
+            policies[spec] = model_policy(PPO.load(spec))
+    results = compare(env, policies, tracks, args.races, args.seed)
+    for name, res in results.items():
+        print(
+            f"{name:>12}: place {res['position']:.2f}, race "
+            f"{res['race_time_s']:.1f} s, wins {res['wins']:.0%}, podiums "
+            f"{res['podiums']:.0%}, legal {res['legal']:.0%}, "
+            f"stops {res['stops']:.2f}, per race: undercuts {res['undercuts']:.2f} "
+            f"overcuts {res['overcuts']:.2f} (against us {res['undercut_on_us']:.2f}"
+            f" / {res['overcut_on_us']:.2f})"
+        )
+    if args.json:
+        args.json.write_text(json.dumps(results, indent=2))
+
+
+if __name__ == "__main__":
+    main()

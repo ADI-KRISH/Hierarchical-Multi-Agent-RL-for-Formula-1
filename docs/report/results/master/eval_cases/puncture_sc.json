@@ -1,0 +1,38 @@
+{
+ "puncture|baseline": {
+  "wins": 0.005,
+  "pos": 9.7,
+  "stops": 1.65,
+  "time": 4863.481175093576
+ },
+ "puncture|runs/strategy_master/model_best.zip": {
+  "wins": 0.055,
+  "pos": 8.15,
+  "stops": 1.95,
+  "time": 4853.067018017664
+ },
+ "puncture|runs/strategy_master/model_final.zip": {
+  "wins": 0.01,
+  "pos": 9.04,
+  "stops": 2.435,
+  "time": 4856.541548736224
+ },
+ "sc|baseline": {
+  "wins": 0.935,
+  "pos": 1.085,
+  "stops": 1.0,
+  "time": 4959.506810284375
+ },
+ "sc|runs/strategy_master/model_best.zip": {
+  "wins": 0.955,
+  "pos": 1.155,
+  "stops": 1.54,
+  "time": 4953.005445943709
+ },
+ "sc|runs/strategy_master/model_final.zip": {
+  "wins": 0.94,
+  "pos": 1.19,
+  "stops": 1.825,
+  "time": 4954.603383990135
+ }
+}

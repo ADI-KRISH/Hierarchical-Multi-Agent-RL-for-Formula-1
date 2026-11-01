@@ -1,0 +1,41 @@
+# One PPO driver trained on six real circuits at once (GPS centerlines from the
+# f1-circuits dataset). Training envs are dealt round-robin across the tracks,
+# so the policy has to learn driving, not one memorised lap.
+
+run:
+  name: driver_ppo_circuits
+  seed: 0
+  track: [zandvoort, spa, suzuka, monaco, sepang, interlagos]
+  total_timesteps: 6000000  # decisions (each is action_repeat physics steps)
+  n_envs: 12                # 2 per circuit
+  eval_every_steps: 100000
+  eval_episodes: 1          # per circuit; also saved as that checkpoint's replay lap
+  eval_seed: 10000
+  torch_threads: 1
+  replay_every_decisions: 5 # replay telemetry every 0.5 s
+
+sim:
+  dt_s: 0.02
+  max_episode_steps: 10000  # 200 s: ~2x the slowest limit lap (Spa, ~94 s)
+
+env:
+  action_repeat: 5          # decide every 0.1 s
+  # The fixed 0.01/s penalty paid too little for speed (the technical-track
+  # agent coasted 9 s a lap). Normalised per track instead: a limit-pace lap
+  # costs 1.25 on every circuit, ~3x the old incentive on the technical track.
+  time_penalty_per_s: 0.0
+  time_penalty_per_limit_lap: 1.25
+
+ppo:
+  learning_rate: 0.0003
+  n_steps: 512              # decisions per env -> 6144 samples per update
+  batch_size: 256
+  n_epochs: 10
+  gamma: 0.995              # ~20 s horizon at 10 Hz
+  gae_lambda: 0.95
+  clip_range: 0.2
+  ent_coef: 0.0
+
+policy:
+  net_arch: [128, 128]
+  activation_fn: Tanh

@@ -1,0 +1,47 @@
+[
+  {
+    "track": "Suzuka",
+    "centreline_limit_s": 83.11661156918215,
+    "optimal_line_s": 76.24147630537993,
+    "scripted_s": 78.02012727630041,
+    "baseline_s": 86.72287925069014,
+    "agent_s": 90.43576780507458,
+    "agent_off_track": false
+  },
+  {
+    "track": "Spa",
+    "centreline_limit_s": 96.30922033757177,
+    "optimal_line_s": 89.57184099010621,
+    "scripted_s": 91.5293032951619,
+    "baseline_s": 100.27547894150449,
+    "agent_s": 107.5534102015317,
+    "agent_off_track": false
+  },
+  {
+    "track": "SaoPaulo",
+    "centreline_limit_s": 65.87095880209301,
+    "optimal_line_s": 58.40221419516581,
+    "scripted_s": 59.72158177575867,
+    "baseline_s": 69.44837053340153,
+    "agent_s": 69.07860965406157,
+    "agent_off_track": false
+  },
+  {
+    "track": "Silverstone",
+    "centreline_limit_s": 86.57609472035594,
+    "optimal_line_s": 75.94749513493186,
+    "scripted_s": 77.6697135787964,
+    "baseline_s": 90.19283369023412,
+    "agent_s": 90.99948697249641,
+    "agent_off_track": false
+  },
+  {
+    "track": "YasMarina",
+    "centreline_limit_s": 94.2391188798448,
+    "optimal_line_s": 83.45966893352887,
+    "scripted_s": 85.95816685614673,
+    "baseline_s": 97.46547075686028,
+    "agent_s": null,
+    "agent_off_track": true
+  }
+]

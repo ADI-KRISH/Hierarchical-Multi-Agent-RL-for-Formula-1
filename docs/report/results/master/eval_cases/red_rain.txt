@@ -1,0 +1,6 @@
+red       baseline                                 wins  97.5%  place 1.02  stops 1.63  time 4856.2
+red       runs/strategy_master/model_best.zip      wins  98.0%  place 1.08  stops 1.80  time 4848.4
+red       runs/strategy_master/model_final.zip     wins  93.5%  place 1.29  stops 1.97  time 4848.5
+rain      baseline                                 wins  67.5%  place 2.35  stops 3.18  time 4991.8
+rain      runs/strategy_master/model_best.zip      wins  92.0%  place 1.39  stops 2.67  time 4976.8
+rain      runs/strategy_master/model_final.zip     wins  90.0%  place 1.51  stops 2.73  time 4974.4

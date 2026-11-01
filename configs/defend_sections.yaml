@@ -1,0 +1,138 @@
+# Defending for the MAIN driver (2026-10-30, user: "train our main driver agent to
+# learn to defend"). Starts from the overtaking driver (overtake_vs_defender_v2's
+# best) and keeps its attack battles; half the section battles are now DEFENCES:
+# our car ahead on the racing line at the start of a straight or braking zone,
+# tyres 0-50% worn, an attacker 6.5-16 m behind. Held = still ahead at the end
+# (two corners on), no pass stuck against us, clean (no contact, off-track,
+# squeeze or chop). Attackers: the rule-based tactician (equal and quicker pace),
+# the scripted dive-bomber, and a frozen copy of the overtaking driver itself
+# (`attacker_model`, the `rival_behind` car).
+# New rules for our car (change the env for the attack battles too, once we lead):
+# `defend_rules` (no cover/inside across a close car's nose) and
+# `defend_moves_only` (with a car behind, only line/cover/inside: no weaving with
+# attack moves). Reward unchanged: symmetric metres-gained term, -100 if a pass
+# sticks against us, +30 ahead at the section end / -30 behind, -1 per dirty step.
+tactical: true
+
+run:
+  name: defend_sections
+  seed: 0
+  total_timesteps: 500000   # agent decisions (a committed move is one decision)
+  n_envs: 12
+  eval_every_steps: 100000
+  torch_threads: 2
+  bc_decisions: 0
+  init_model: runs/overtake_vs_defender_v2/model_best.zip
+  defender_model: runs/defender/model_best_v1_200k.zip
+  defender_moves: [line, cover, inside]
+  bc_epochs: 10
+  real_start_frac: 0.0
+  incident_dir: data/incidents
+  real_eval_per_track: 20
+  section_frac: 1.0
+  section_opponents: [slow, guard_slow, rival_ahead_slow, rival_ahead_slow, backmarker]
+  section_gap_m: [6.5, 16.0]
+  section_priority: true
+  section_eval_opponents: [slow, guard_slow, rival_ahead_slow]
+  section_eval_gap_m: 9.0
+  section_defend_frac: 0.5
+  section_attackers: [rival_tactician, rival_tactician_fast, attacker, rival_behind, rival_behind]
+  section_defend_kinds: [straight, braking]
+  section_defend_wear: [0.0, 0.5]
+  section_eval_attackers: [rival_tactician_fast, rival_behind]
+  attacker_model: runs/overtake_vs_defender_v2/model_best.zip
+  rival_frac: 0.0   # self-play needs in-process envs; this run uses 12 processes
+  pool_every_steps: 150000
+  pool_size: 8
+  normalize_reward: true
+  subproc: true
+
+sim:
+  dt_s: 0.02
+  max_episode_steps: 10000
+
+env:
+  action_repeat: 5
+  reference_features: true
+  tactical: true
+  tires: true
+  safety_filter: true
+  wear_cost_per_unit: 3000.0
+  opponents: [none, slow, slow, equal, defender, attacker, attacker_equal, backmarker]
+  opponent_gap_m: [10.0, 35.0]
+  real_gap_m: [8.0, 40.0]
+  overtake_bonus: 100.0
+  pass_hold_m: 600.0
+  pass_reward_per_m: 1.0
+  intervention_penalty: 0.5
+  lookahead_windows_m: [10, 20, 30, 40, 50, 60, 80, 100, 125, 150, 200, 250]
+  progress_scale_m: 50.0
+  fail_penalty: 50.0
+  episode_s: 90.0
+  min_speed_ms: 3.0
+  follow_shield: true
+  shield_in_tow: false
+  soft_follow: true
+  opponent_yield: false
+  wake_anticipation_m: 25.0
+  tow_accel_gain: 0.0
+  tow_boost_ms: 8.0   # cap above the tow's own top speed (97/sqrt(0.88) = 103.4)
+  aero_drag: true
+  tow_drag_cut: 0.12
+  plan_features: true
+  opponent_braking_fraction: 0.95
+  opponent_accel_fraction: 0.95
+  chop_line_relative: true   # a chop = a step off our line toward it, not the line's sweep
+  side_own_fault: true   # a squeeze by the other car is not our dirty move
+  path_edge_inset_m: 0.6
+  track_limit_margin_m: 0.5
+  commit_moves: false
+  lane_moves: true
+  safety_lift_first: true
+  path_saturated_brake: 0.6
+  slow_power_frac: 1.0   # was 0.97: slower cars are no longer down on power
+  pull_moves: true
+  defend_rules: true
+  defend_moves_only: true
+  section_win_bonus: 30.0
+  section_fail_penalty: 30.0
+  section_tail_m: 100.0
+  rescue_penalty: 0.0
+  dirty_penalty: 1.0
+  hold_until_clear: true
+  opponent_features: true
+  guard:
+    react_gap_m: 60.0
+    inside_gap_s: 0.35
+    inside_from_m: 300.0
+    threat_margin_m: 4.0
+    cover_lateral_m: 1.0
+    reaction_s: 0.15
+    max_shift_m: 3.0
+    room_m: 3.0
+
+ppo:
+  learning_rate: 0.0003
+  n_steps: 128
+  batch_size: 256
+  n_epochs: 8
+  gamma: 0.97      # a decision is 0.5 s or a whole move: shorter look-ahead than 0.99
+  gae_lambda: 0.95
+  ent_coef: 0.01
+  clip_range: 0.2
+
+policy:
+  net_arch: [256, 256]
+  activation_fn: ReLU
+
+sections:
+  approach_m: 200.0
+  past_apex_m: 30.0
+  turn_in_frac: 0.5
+  corner_exit_m: 300.0
+  straight_from_apex_m: 10.0
+  corner_gap_m: 3.0
+  corner_shift_m: 3.0
+  min_length_m: 80.0
+  finish_at_exit: true
+  span_corners: 2

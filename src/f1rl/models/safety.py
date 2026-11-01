@@ -64,6 +64,13 @@ class SafetyCheck:
     # car lined up several metres behind, where the crude lane-keeping fallback
     # "sees" a flat-out car run wide on a curving straight and gets braked.
     edge_overlap_only: bool = False
+    # A car AHEAD and clear of the other car's nose (more than a car length plus
+    # the margin in front of it) keeps its command, braking aside: the car behind
+    # must avoid it (the rules of the road), and the filter judges the car behind
+    # first. False = earlier runs, where a car rejoining its line in front of a car
+    # 10 m behind was held off the line (steering at full lock, lifting) and both
+    # cars crawled (checked 2026-10-31, Monza main straight: ~70 m/s, not ~90).
+    leader_keeps_pace: bool = False
 
 
 def wrap(gap_m: float, lap_m: float) -> float:
@@ -284,6 +291,10 @@ def safe_command(
     worst, edge = judge(command)
     tries = candidates(command, me, other, check)
     tries += fallbacks(car, me, command, other, kappa_at(me.s_m), check)
+    if check.leader_keeps_pace and command[0] >= 0.0:
+        lead = wrap(me.s_m - other.s_m, check.lap_m)
+        if lead > check.car_length_m + check.margin_s_m:
+            return command, False  # the car behind is the one to avoid
     if worst > clear:
         # Only beside the other car (within a car length of touching): further
         # away the fallback's crude lane-keeping often "sees" a flat-out car run

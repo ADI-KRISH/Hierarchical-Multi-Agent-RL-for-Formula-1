@@ -41,7 +41,7 @@ def style(ax: plt.Axes, xlabel: str, ylabel: str, title: str) -> None:
 
 def save(fig: plt.Figure, name: str) -> None:
     fig.tight_layout()
-    fig.savefig(OUT / name, dpi=160)
+    fig.savefig(OUT / name, dpi=160, bbox_inches="tight")
     plt.close(fig)
     print("wrote", OUT / name)
 

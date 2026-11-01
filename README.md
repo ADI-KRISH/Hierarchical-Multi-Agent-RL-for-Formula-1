@@ -22,7 +22,7 @@ with Stable-Baselines3:
 | Clean passes in section battles (350) | **49** | 29 (starting policy) |
 | Race wins vs rule-based field, measured driver | **72%** | 10% |
 | Race wins in the rain | **68%** | 0% |
-| Race wins, 1% faster car: clean / after spin / safety car | **96% / 29% / 94.5%** | 91% / 4.5% / 89.5% |
+| Race wins, 1% faster car, mean of 3 seeds: clean / after spin / safety car | **96.7% / 29.8%** / 78% | 91% / 4.5% / **89.5%** |
 | Planner lap pace | **+1.1%** off the limit lap | pure SAC RL: +17-20% |
 
 ## Documents

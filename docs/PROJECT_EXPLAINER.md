@@ -137,7 +137,7 @@ defenders, 92 attacks vs slower cars, 587 defences).
 | `strategy_fast_skill.yaml` | 0.5% faster, better overtaker | wins 45% vs 15%, 11.4 passes/race |
 | `strategy_fast_win.yaml` | 1% faster, win-only reward | 200/200 wins vs 91% |
 | `strategy_recover.yaml` | a spin or puncture every race | place 6.9 vs 8.1 |
-| `strategy_all.yaml` | every case: clean, spin, puncture, SC, VSC (1% car) | clean 96 vs 91%, spin 29 vs 4.5%, SC 94.5 vs 89.5% |
+| `strategy_all.yaml` | every case: clean, spin, puncture, SC, VSC (1% car) | 1 seed, no min-stint rule: clean 96 vs 91%, spin 29 vs 4.5%, SC 94.5 vs 89.5%; 3 seeds with the rule: 96.7 / 29.8 / 78% |
 | `strategy_all_dominant.yaml` | every case, 3% car | ~100% except puncture 56 vs 44% |
 | `strategy_master.yaml` | adds rain, red flags, second SC, restarts, ERS, early-stop rule | in progress when this was written |
 
@@ -181,7 +181,7 @@ defenders, 92 attacks vs slower cars, 587 defences).
 * Paired comparison tools (same seed, same race) and held-out scorecards.
 * HTML replays: driver comparison, optimal lines, battle replays, race replays.
 * One YAML config per experiment; every run logs its config, seed and git commit.
-* 270+ unit tests; ruff and strict mypy.
+* 341 unit tests (all passing); ruff and strict mypy.
 
 ## 7. Problems we faced and how we handled them
 
@@ -282,7 +282,7 @@ defenders, 92 attacks vs slower cars, 587 defences).
 | Clean passes (held-out)? | 49 of 350 vs 29 for the starting model |
 | Strategy wins vs rule-based (measured driver)? | 72% vs 10% |
 | Strategy wins in rain? | 68% vs 0% |
-| Strategy wins, 1% faster car: clean / spin / SC? | 96 / 29 / 94.5% vs 91 / 4.5 / 89.5% |
+| Strategy wins, 1% faster car: clean / spin / SC? | 3 seeds: 96.7 / 29.8 / 78% vs 91 / 4.5 / 89.5% (SC is a known weak spot) |
 | Strategy wins, fastest car, win-only? | 200 of 200 |
 
 ## 9. Where things live

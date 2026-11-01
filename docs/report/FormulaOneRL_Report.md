@@ -307,11 +307,13 @@ plan.
 ### 3.2.5 Reward shaping
 
 *Driver.* Per decision,
-$$r_t = \frac{\Delta s}{d_p} - c_{\text{fail}}\,\mathbb 1[\text{off/stall}]
-+ B\,(\mathbb 1[\text{pass held}] - \mathbb 1[\text{place lost}])
-+ w_g\,\Delta g\,\mathbb 1[\text{near}]
-- c_d\, n_{\text{dirty}} - c_i\, n_{\text{shield}} - c_w(1-p)\Delta w
-\pm r_{\text{section}},$$
+$$\begin{aligned}
+r_t ={}& \frac{\Delta s}{d_p} - c_{\text{fail}}\,\mathbb 1[\text{off/stall}]\\
+&+ B\,\big(\mathbb 1[\text{pass held}] - \mathbb 1[\text{place lost}]\big)\\
+&+ w_g\,\Delta g\,\mathbb 1[\text{near}] - c_d\, n_{\text{dirty}}
+- c_i\, n_{\text{shield}}\\
+&- c_w(1-p)\,\Delta w \pm r_{\text{section}},
+\end{aligned}$$
 with progress scale $d_p=50$ m, failure penalty $c_{\text{fail}}=50$, overtake
 bonus $B=100$ paid only once a new order has held for 600 m (so passing and being
 re-passed earns nothing), a GT Sophy-style gap term $w_g=1$ per metre gained on a
@@ -334,13 +336,20 @@ pure continuous-control baseline we used **Soft Actor-Critic** (SAC) [33], which
 the standard choice for continuous throttle and steering [13].
 
 PPO maximises the clipped surrogate
-$$L^{\text{CLIP}}(\theta)=\mathbb E_t\big[\min\big(\rho_t(\theta)\hat A_t,\;
-\operatorname{clip}(\rho_t(\theta),1-\epsilon,1+\epsilon)\hat A_t\big)\big],\qquad
-\rho_t=\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\theta_{\text{old}}}(a_t\mid s_t)},$$
+$$\begin{aligned}
+L^{\text{CLIP}}(\theta)&=\mathbb E_t\big[\min\big(\rho_t(\theta)\hat A_t,\;
+\operatorname{clip}(\rho_t(\theta),1-\epsilon,1+\epsilon)\hat A_t\big)\big],\\
+\rho_t&=\frac{\pi_\theta(a_t\mid s_t)}{\pi_{\theta_{\text{old}}}(a_t\mid s_t)},
+\end{aligned}$$
 with advantages from generalised advantage estimation [34]
 $\hat A_t=\sum_{l\ge0}(\gamma\lambda)^l\delta_{t+l}$,
 $\delta_t=r_t+\gamma V_\phi(s_{t+1})-V_\phi(s_t)$. The full loss is
-$L=-L^{\text{CLIP}}+c_v\,\mathbb E_t[(V_\phi(s_t)-\hat G_t)^2]-c_e\,\mathbb E_t[\mathcal H(\pi_\theta(\cdot\mid s_t))]$,
+
+$$\begin{aligned}
+L={}&-L^{\text{CLIP}}+c_v\,\mathbb E_t\big[(V_\phi(s_t)-\hat G_t)^2\big]\\
+&-c_e\,\mathbb E_t\big[\mathcal H(\pi_\theta(\cdot\mid s_t))\big],
+\end{aligned}$$
+
 minimised with Adam for several epochs over mini-batches of each rollout; $\epsilon=0.2$.
 SAC instead maximises $\mathbb E[\sum_t r_t+\alpha\mathcal H(\pi(\cdot\mid s_t))]$
 with twin Q-critics, a target network updated with rate $\tau$, and an automatically
@@ -512,9 +521,9 @@ still ahead and clean. A *race* succeeds when the car wins legally.
 | Defences held, worn tyres (460) | **273 (59.3%)** | 264 (57.4%) line-holding |
 | Clean section passes vs slow + guard cars (350) | **49 (14.0%)** | 29 (8.3%) starting policy |
 | Attack vs equal-pace defender, real starts (495)* | 434 (87.7%) | 168 (33.9%) scripted tactician |
-| Race wins, clean, 1% faster car (200) | **96%** | 91% rule-based plan |
-| Race wins after a spin (200) | **29%** | 4.5% |
-| Race wins, safety car (200) | **94.5%** | 89.5% |
+| Race wins, clean, 1% faster car (200, 3 seeds) | **96.7%** | 91% rule-based plan |
+| Race wins after a spin (200, 3 seeds) | **29.8%** | 4.5% |
+| Race wins, safety car (200, 3 seeds) | 78.0% | **89.5%** |
 
 \*Later found to be inflated by place-swapping; see Section 4.3.
 
@@ -535,8 +544,11 @@ Marina is excluded because SAC did not finish it (scripted: 2.5 s there).
 *Strategy (reward maximisation).* Per race, place regret is $\text{place}-1$
 (distance from the best possible result). In the fastest-car, win-only scenario the
 agent's cumulative place regret over 200 held-out races is 0 (200/200 wins) against
-22 for the rule-based plan (mean place 1.11). Race-time regret for the three-seed
-study is reported in Section 4.2.5.
+22 for the rule-based plan (mean place 1.11). For race time we define regret per
+race as the time lost to the faster of the two policies on that seeded race. Over
+200 clean held-out races the three seeds accumulate 44 s, 173 s and 26 s of
+race-time regret, against 1,125 s for the rule-based plan (measured against seed
+2): the agent is the faster policy in almost every race.
 
 ### 4.2.4 Convergence speed and sample efficiency
 
@@ -554,11 +566,43 @@ The driver is far less sample-efficient: SAC needed about 0.3M decisions (8 h of
 simulated driving) just to finish laps reliably, and never matched the scripted
 planner within 2M decisions. The move-level PPO driver starts from a
 behaviour-cloned policy, so its first evaluation is already competent; the real-
-start run reached its attack plateau within 0.2M decisions (Fig. 7).
+start run reached its attack plateau within 0.2M decisions (Fig. 8).
 
 ### 4.2.5 Stability across seeds
 
-{{SEED_SECTION}}
+We retrained the main strategy configuration (`strategy_all.yaml`: 1% faster car,
+races with spins, punctures, SC and VSC) with three seeds (0, 1, 2) for 1M laps
+each, using identical code, and scored each seed's best checkpoint on the same
+200 held-out races per case. These runs use the current configuration, which
+includes the minimum-stint rule (no new stop within five laps of the last).
+
+![Seed stability.](figures/fig7_strategy_seeds.png){width=85%}
+
+*Fig. 7. Validation win rate for three seeds: individual runs (grey), mean (blue)
+and one standard deviation (band). All three seeds pass the rule-based plan's 57%
+within 0.1-0.25M laps and settle at 60-80%.*
+
+| Held-out case (200 races) | Seed 0 | Seed 1 | Seed 2 | Mean ± s.d. | 95% CI | Rule-based |
+|---|---|---|---|---|---|---|
+| Clean race wins | 97.0% | 95.0% | 98.0% | 96.7 ± 1.5% | ±3.8 | 91.0% |
+| After a spin | 33.5% | 25.5% | 30.5% | 29.8 ± 4.0% | ±10.0 | 4.5% |
+| After a puncture | 0% | 0% | 0% | 0% | - | 0% |
+| Safety car | 81.0% | 78.0% | 75.0% | 78.0 ± 3.0% | ±7.5 | 89.5% |
+| VSC | 93.5% | 82.5% | 86.0% | 87.3 ± 5.6% | ±14.0 | 89.0% |
+| Mean race time vs rule-based, clean | -5.0 s | -3.4 s | -5.5 s | -4.6 ± 1.1 s | | 0 |
+
+Steps to first beat the rule-based plan on validation: 100k, 250k and 100k laps;
+best validation win rate 77%, 77% and 80%. The clean-race and after-spin
+advantages hold for every seed and their confidence intervals exclude the
+baseline. The safety-car result does not: every seed wins fewer SC races than the
+rule-based plan (78% vs 89.5%), although its mean race time is still 0.5-1.4 s
+shorter. The agent optimises race time, not position, and under the minimum-stint
+rule it makes extra stops under the safety car (1.4-1.6 stops against 1.0) that
+save time on average but sometimes cost the lead. The earlier single-seed agent
+trained without the minimum-stint rule won 94.5% of SC races, so this rule and the
+time-based reward interact; a position-aware term under neutralised running is the
+obvious fix. Seed 1 is the weakest in every case, which shows why a single seed
+should not be reported alone.
 
 ### 4.2.6 Computational efficiency
 
@@ -567,13 +611,13 @@ start run reached its attack plateau within 0.2M decisions (Fig. 7).
 | SAC driver training (2.0M decisions) | 3 h 29 min, laptop CPU, ≈165 decisions/s shared |
 | PPO real-start driver (1.5M decisions) | 3 h 31 min, ≈117 decisions/s with the shield on |
 | PPO defend run 2 (0.5M decisions) | 1 h 19 min, ≈104 decisions/s |
-| PPO strategist (2M laps) | {{STRAT_TIME}} |
+| PPO strategist (2M laps) | 1M laps in about 15 min per run (three runs sharing 4 vCPUs, one thread each); ≈1.1k laps/s |
 | Safety shield cost | ≈35% lower environment throughput |
 | Parameters | driver 175,122; strategist 14,986 |
-| Inference latency (CPU, batch 1) | {{LATENCY}} |
+| Inference latency (CPU, batch 1) | driver 0.06 ms per decision, strategist 0.15 ms per decision (policy only) |
 | Total logged training time | > 20 h CPU across all runs; no GPU used |
 
-Memory use was below 2 GB per run. Energy use was not measured.
+A strategy training run used about 0.8 GB of resident memory in its main process; memory of the driver runs and energy use were not measured.
 
 ### 4.2.7 Problem-specific metrics
 
@@ -664,7 +708,7 @@ runs; driver results transferred with no visible gap.
 | Random policy | 0% | 10.0 | 95% | yes | - |
 | Rule-based M→H one-stop at 45% | 91% clean / 4.5% after spin | 1.11 (win-only scenario) | 100% | yes | negligible |
 | RSRL [27] (reported, different simulator) | - | P5.33 vs P5.63 baseline | - | Bahrain 2023 | - |
-| **PPO strategist (proposed)** | **96% clean / 29% after spin / 94.5% SC** | **1.00** (win-only scenario) | 100% | yes | {{LATENCY_STRAT}} |
+| **PPO strategist (proposed, 3 seeds)** | **96.7% clean / 29.8% after spin / 78% SC** | **1.00** (win-only scenario) | 100% | yes | 0.15 ms |
 
 Results from other papers use different simulators and fields, so they are listed
 for context, not as a direct numerical comparison.
@@ -673,7 +717,7 @@ for context, not as a direct numerical comparison.
 
 ![Reward ablation for the attacking driver.](figures/fig4_tactical_reward_ablation.png){width=100%}
 
-*Fig. 7. Real-start driver, run 1 (overtake bonus 20, entropy coefficient 0.01) vs
+*Fig. 8. Real-start driver, run 1 (overtake bonus 20, entropy coefficient 0.01) vs
 run 2 (bonus 100, entropy 0.03, plus shield fixes). Run 1 stops attacking within
 0.2M decisions; run 2 attacks on 37/43 starts but defends worse.*
 
@@ -703,7 +747,7 @@ one corner. Against the RL-trained defender the learned attacker passed 14 of 17
 times against 15 for the scripted tactician, so a stronger opponent lowers the
 success rate of both drivers alike.
 *Failures and events:* the strategist was evaluated separately on clean races,
-spins, punctures, safety cars and VSCs (Fig. 8). With a 3% faster car it won
+spins, punctures, safety cars and VSCs (Fig. 9). With a 3% faster car it won
 99.5-100% in every case except punctures (56% vs 44% for the rule-based plan).
 *Forecast error:* the rain agent reads a noisy 3- and 6-lap forecast and still
 pitted about one lap before rivals.
@@ -711,7 +755,7 @@ pitted about one lap before rivals.
 
 ![Held-out wins by race case.](figures/fig8_strategy_held_out_cases.png){width=80%}
 
-*Fig. 8. Held-out wins by race case, 200 races each, 1% faster car.*
+*Fig. 9. Held-out wins by race case, 200 races each, 1% faster car (the single-seed model trained without the minimum-stint rule; the three-seed results with the rule are in Section 4.2.5).*
 
 **Sensitivity (parameter changes).** With car pace edges of 0.5%, 1% and 3%, the
 agent's advantage over the rule-based plan is largest where the race is close (1%:
@@ -746,7 +790,8 @@ starts adds unseen *situations* drawn from real races.
 * **Rival behaviour.** Strategy rivals follow seeded rule-based plans and never
   react to an undercut, which flatters early stops; there is no cold-tyre out-lap.
 * **Statistical scope.** Apart from the three-seed strategy study, results come
-  from one seed per configuration; evaluation sets of 30-40 races give wide
+  from one seed per configuration; the seed study itself found a safety-car
+  weakness (78% vs 89.5% wins) that one seed alone had hidden; evaluation sets of 30-40 races give wide
   confidence intervals.
 * **Computational cost.** Driver training runs at 100-170 decisions per second on
   a laptop CPU, and the shield costs about a third of that, which limited the
@@ -771,8 +816,10 @@ contacts across more than a thousand real held-out situations; the defending dri
 improved held-out defences (273 vs 264) and passes (49 vs 29); and the strategist
 learned undercuts and event responses that beat a rule-based plan on unseen
 circuits (96% vs 91% clean wins, 29% vs 4.5% after a spin, 200/200 when quickest),
-reaching baseline level within 0.1-0.4 million laps. Learning stability across
-seeds is reported in Section 4.2.5.
+reaching baseline level within 0.1-0.4 million laps. Across three seeds the
+clean-race and after-spin gains are stable (96.7 ± 1.5% and 29.8 ± 4.0% wins), while
+safety-car races expose a weakness of the race-time reward under the minimum-stint
+rule (78% vs 89.5%).
 
 Future work follows from the limitations: calibrate tyre and pit constants from
 multi-race FastF1 stints; give the driver the push mode and attack/defend orders as
